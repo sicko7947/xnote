@@ -1,0 +1,31 @@
+# Local builds and macOS files
+/dist/
+.DS_Store
+*.test
+coverage.out
+
+# Local application signing profile; only the empty example is versioned.
+/internal/xnote/app_profile.json
+
+# Credentials and private runtime data
+.env
+.env.*
+!.env.example
+/config.json
+/data/
+/recordings/
+/.work/
+*.log
+*.mp3
+*.wav
+*.m4a
+*.partial
+
+# Do not reintroduce reverse-engineering artifacts or the retired prototype.
+*.apk
+*.xapk
+/.venv/
+/research/
+/doway_extracted/
+__pycache__/
+*.pyc

@@ -29,3 +29,6 @@ coverage.out
 /doway_extracted/
 __pycache__/
 *.pyc
+
+# Local-only APK, extraction and disassembly references
+/artifacts/

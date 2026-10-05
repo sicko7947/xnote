@@ -32,11 +32,15 @@ type Config struct {
 	APIKeyEnv                string `json:"api_key_env"`
 	Model                    string `json:"api_model"`
 	OfflineModel             string `json:"offline_model"`
+	ShareURL                 string `json:"share_url,omitempty"`
+	SummaryDisabled          bool   `json:"summary_disabled,omitempty"`
+	MindmapEnabled           bool   `json:"mindmap_enabled,omitempty"`
 }
 type Record struct {
 	SummaryState     string         `json:"summary_state,omitempty"`
 	SummaryError     string         `json:"summary_error,omitempty"`
 	SummaryInputHash string         `json:"summary_input_hash,omitempty"`
+	SummaryOptions   string         `json:"summary_options,omitempty"`
 	Summary          *SummaryResult `json:"summary,omitempty"`
 	TitleSource      string         `json:"title_source,omitempty"`
 	Duration         float64        `json:"duration_seconds,omitempty"`
@@ -85,6 +89,14 @@ func cloneRecord(r Record) Record {
 	if r.Summary != nil {
 		summary := *r.Summary
 		summary.Keywords = append([]string(nil), summary.Keywords...)
+		if summary.Mindmap != nil {
+			m := *summary.Mindmap
+			m.Branches = append([]MindmapBranch(nil), m.Branches...)
+			for i := range m.Branches {
+				m.Branches[i].Points = append([]string(nil), m.Branches[i].Points...)
+			}
+			summary.Mindmap = &m
+		}
 		r.Summary = &summary
 	}
 	return r
@@ -334,6 +346,14 @@ func (s *Store) save(r Record) error {
 		summary.WriteString(strings.TrimSpace(r.Summary.Markdown))
 		summary.WriteByte('\n')
 		if err := atomicWrite(summaryPath, []byte(summary.String())); err != nil {
+			return err
+		}
+		mindmapPath := filepath.Join(dir, "mindmap.md")
+		if r.Summary.Mindmap != nil {
+			if err := atomicWrite(mindmapPath, []byte(mindmapMarkdown(r.Summary.Mindmap))); err != nil {
+				return err
+			}
+		} else if err := os.Remove(mindmapPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}

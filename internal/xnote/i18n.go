@@ -1,6 +1,19 @@
 package xnote
 
 var words = map[string][3]string{
+	"summary_enabled":                   {"生成 Summary 摘要", "Generate summary", "要約を生成"},
+	"mindmap_enabled":                   {"生成 Mindmap 思维导图", "Generate mindmap", "マインドマップを生成"},
+	"mindmap":                           {"思维导图", "Mindmap", "マインドマップ"},
+	"share_settings":                    {"分享站点", "Share site", "共有サイト"},
+	"share_settings_hint":               {"Cloudflare 地址；密钥放在本地 .env", "Cloudflare URL; keep token in local .env", "Cloudflare URL・キーはローカル .env に保存"},
+	"share":                             {"公开分享", "Public share", "公開共有"},
+	"share_publish":                     {"发布 / 更新", "Publish / update", "公開 / 更新"},
+	"share_copy":                        {"分享链接 / 复制", "Share URL / copy", "共有リンク / コピー"},
+	"share_revoke":                      {"取消分享", "Revoke share", "共有を解除"},
+	"share_audio":                       {"包含音频", "Include audio", "音声を含める"},
+	"share_explain":                     {"发布到你配置的分享站点。持有链接的人可查看转写及已生成的总结、思维导图。默认只分享文字。", "Publish to your configured share site. Anyone with the link can read the transcript and generated insights. Text only by default.", "共有サイトに公開します。リンクを持つ人は文字起こしと生成済みの要約を閲覧できます。既定はテキストのみ。"},
+	"share_missing":                     {"尚未成功发布分享。", "No published share yet.", "共有はまだ公開されていません。"},
+	"share_revoke_confirm":              {"取消分享后，原链接无法继续访问。已被下载的副本无法收回。", "Revoke access through this link? Already downloaded copies cannot be recalled.", "リンクからのアクセスを解除しますか？ダウンロード済みのコピーは回収できません。"},
 	"transcription_concurrency":         {"转写并发数（1–16）", "Transcription concurrency (1–16)", "同時文字起こし数（1–16）"},
 	"transcription_concurrency_invalid": {"并发数必须是 1–16 的整数；运行中的任务会继续。", "Concurrency must be an integer from 1 to 16; active tasks continue.", "同時実行数は 1～16 の整数で指定してください。実行中の処理は継続します。"},
 	"transcription_counts":              {"转写：运行 %d · 排队 %d · 并发上限 %d", "Transcription: running %d · queued %d · limit %d", "文字起こし: 実行中 %d・待機 %d・上限 %d"},

@@ -180,6 +180,33 @@ TUI 或 `watch` 运行时会自动重连；自动下载与自动转写各自控�
 - DOWAY：需有效登录会话、对应录音器和明确录音语言；是否允许转写由服务端额度验证决定。
 - 同步随 TUI 或 `watch` 进程运行；`status`、`list` 等一次性 CLI 命令不会启动持续同步。
 
+## 自己的公开分享链接
+
+Cloudflare Worker + 私有 R2，使用免费分配的 `workers.dev` 地址，无需域名或数据库。
+网页支持 Markdown、播放器、说话人时间线、Summary 和可选 Mindmap；Agent 可以直接 `curl` 读取 JSON / Markdown。
+
+```sh
+scripts/build.sh
+cd web
+bun install --frozen-lockfile
+bunx wrangler login
+bun run setup
+```
+
+部署一次后，在录音「更多 → 公开分享」里发布并复制链接；默认仅文字，可选包含音频。
+重复发布更新原链接，「取消分享」撤销访问。AI 设置中 Summary 默认开启、Mindmap 默认关闭；
+沿用现有 DOWAY AI 队列生成，生成完再发布。分享网站不调用模型。
+
+```sh
+xnote config mindmap_enabled true    # 可选
+xnote summarize RECORDING_ID        # 需要 TUI / watch 处理队列
+xnote share RECORDING_ID --audio
+xnote share show RECORDING_ID
+xnote share revoke RECORDING_ID
+```
+
+[部署、安全边界与 curl 接口](docs/public-sharing.md)。管理密钥自动存入私有录音库 `.env`，不会进入仓库。
+
 ## AI / CLI
 
 ```sh

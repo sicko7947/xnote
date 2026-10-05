@@ -60,6 +60,7 @@ func (d *desktop) settings() {
 	add("advanced", "advanced_hint", '4', d.advancedMenu)
 	add("connection", "connection_settings_hint", '5', d.connectionStatus)
 	add("summary_settings", "summary_settings_hint", '6', d.summarySettings)
+	add("share_settings", "share_settings_hint", '7', d.shareSettings)
 	list.SetDoneFunc(d.closeModal)
-	d.popup(list, 76, 16)
+	d.popup(list, 76, 18)
 }

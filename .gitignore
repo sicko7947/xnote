@@ -32,3 +32,9 @@ __pycache__/
 
 # Local-only APK, extraction and disassembly references
 /artifacts/
+
+# Share website tooling and local secrets
+/web/node_modules/
+/web/.wrangler/
+/web/.dev.vars
+/web/.dev.vars.*

@@ -50,6 +50,9 @@ xnote [--data FOLDER] summarize ID    Queue AI title and summary (watch/TUI must
 xnote [--data FOLDER] download ID     Queue recording download
 xnote [--data FOLDER] cloud list|show UID|import LOCAL_ID CLOUD_UID
 xnote [--data FOLDER] doctor
+xnote [--data FOLDER] share ID [--audio]  Publish/update public share (text only by default)
+xnote [--data FOLDER] share show ID   Show the saved share URL
+xnote [--data FOLDER] share revoke ID Revoke public access
 
 Linux (BlueZ + mpv) and macOS supported; local offline models are optional.
 Search stdout is JSON with --json; errors go to stderr. Audio and Markdown are
@@ -111,6 +114,26 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 			return e
 		}
 		output(r)
+	case "share":
+		if len(args) == 2 && args[0] == "show" {
+			state, err := s.ShareInfo(args[1])
+			if err != nil {
+				return err
+			}
+			output(state)
+			return nil
+		}
+		if len(args) == 2 && args[0] == "revoke" {
+			return s.RevokeShare(ctx, args[1])
+		}
+		if len(args) < 1 || len(args) > 2 || (len(args) == 2 && args[1] != "--audio") {
+			return errors.New("share requires ID [--audio], show ID, or revoke ID")
+		}
+		state, err := s.Publish(ctx, args[0], len(args) == 2)
+		if err != nil {
+			return err
+		}
+		output(state)
 	case "cloud":
 		if len(args) == 0 {
 			return errors.New("cloud requires list, show UID, or import LOCAL_ID CLOUD_UID")
@@ -188,6 +211,15 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 				return errors.New("summary_thinking must be true or false")
 			}
 			c.SummaryThinking = args[1] == "true"
+		case "summary_enabled", "mindmap_enabled":
+			if args[1] != "true" && args[1] != "false" {
+				return fmt.Errorf("%s must be true or false", args[0])
+			}
+			if args[0] == "summary_enabled" {
+				c.SummaryDisabled = args[1] != "true"
+			} else {
+				c.MindmapEnabled = args[1] == "true"
+			}
 		case "summary_concurrency":
 			n, err := strconv.Atoi(args[1])
 			if err != nil || n < 1 || n > 8 {
@@ -227,6 +259,8 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 			c.Model = args[1]
 		case "offline_model":
 			c.OfflineModel = args[1]
+		case "share_url":
+			c.ShareURL = args[1]
 		case "transcription_language":
 			c.Language = args[1]
 		default:

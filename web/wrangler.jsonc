@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "xnote-share",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "r2_buckets": [{ "binding": "SHARES", "bucket_name": "xnote-shares" }],
+  "rules": [
+    { "type": "Text", "globs": ["**/*.css", "**/app.js"], "fallthrough": true },
+  ],
+  "observability": { "enabled": false },
+}

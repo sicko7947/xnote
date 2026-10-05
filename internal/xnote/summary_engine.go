@@ -141,8 +141,11 @@ func summaryLoopWithDeps(ctx context.Context, s *Store, d summaryLoopDeps) {
 					if generateErr != nil && ctx.Err() != nil {
 						generateErr = errors.New("AI processing interrupted; retry manually to avoid duplicate requests")
 					}
-					if generateErr == nil && strings.TrimSpace(result.Markdown) == "" {
+					if generateErr == nil && !c.SummaryDisabled && strings.TrimSpace(result.Markdown) == "" {
 						generateErr = errors.New("AI processing returned an empty summary")
+					}
+					if generateErr == nil && c.MindmapEnabled {
+						generateErr = validateMindmap(result.Mindmap)
 					}
 					saveErr := s.Update(r.ID, func(current *Record) {
 						if current.SummaryState != "running" || current.SummaryInputHash != r.SummaryInputHash {
@@ -165,7 +168,7 @@ func summaryLoopWithDeps(ctx context.Context, s *Store, d summaryLoopDeps) {
 						generateErr = saveErr
 					}
 					finished <- summaryFinished{ID: r.ID, Err: generateErr}
-				}(r, c)
+				}(r, summaryConfigForOptions(c, r.SummaryOptions))
 			}
 		}
 		st := SummaryStatus{Phase: phase, Running: len(active), Queued: queued, Concurrency: limit}

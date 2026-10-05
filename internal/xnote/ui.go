@@ -389,6 +389,9 @@ func (d *desktop) showDetail() {
 				b.WriteString(d.t("summary_keywords") + ": " + tview.Escape(strings.Join(r.Summary.Keywords, " · ")) + "\n")
 			}
 			b.WriteString("\n" + tview.Escape(r.Summary.Markdown) + "\n")
+			if r.Summary.Mindmap != nil {
+				b.WriteString("\n[::b]" + d.t("mindmap") + "[-:-:-]\n" + tview.Escape(mindmapMarkdown(r.Summary.Mindmap)) + "\n")
+			}
 		}
 		b.WriteString("\n[::b]" + d.t("transcript") + "[-:-:-]\n")
 	}
@@ -508,10 +511,34 @@ func (d *desktop) prompt(title, value string, submit func(string)) {
 }
 func (d *desktop) recordActions() []recordAction {
 	var actions []recordAction
-	keys := map[string]rune{"rename": 'r', "transcribe": 't', "folder": 'f', "trash": 'x', "restore": 'u', "download": 'd', "device_delete": 'D', "generate_summary": 'i', "retry_summary": 'i'}
+	keys := map[string]rune{"rename": 'r', "transcribe": 't', "folder": 'f', "trash": 'x', "restore": 'u', "download": 'd', "device_delete": 'D', "generate_summary": 'i', "retry_summary": 'i', "share": 'p', "share_copy": 'y', "share_revoke": 'v'}
 	add := func(key string, fn func()) { actions = append(actions, recordAction{key, keys[key], fn}) }
 	r, ok := d.record()
 	if ok {
+		if !r.Trashed {
+			add("share", func() { d.shareRecording(r) })
+		}
+		// Keep disk reads out of keyboard navigation; resolve share state only on action.
+		add("share_copy", func() {
+			state, err := d.s.ShareInfo(r.ID)
+			if err != nil {
+				d.message(err)
+				return
+			}
+			d.showShareURL(state)
+		})
+		add("share_revoke", func() {
+			state, err := d.s.ShareInfo(r.ID)
+			if err != nil {
+				d.message(err)
+				return
+			}
+			if state == nil || state.Status == "revoked" {
+				d.setNotice(d.t("share_missing"))
+				return
+			}
+			d.confirmRevokeShare(r)
+		})
 		add("rename", func() {
 			d.prompt(d.t("rename"), r.Title, func(value string) {
 				if strings.TrimSpace(value) != "" {

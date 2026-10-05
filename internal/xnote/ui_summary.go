@@ -12,7 +12,7 @@ func (d *desktop) summarySettings() {
 	original := c
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle(" " + d.t("summary_settings") + " ")
-	form.AddTextView("DOWAY", d.t("summary_provider_help"), 64, 6, false, false)
+	form.AddTextView("DOWAY", d.t("summary_provider_help"), 72, 4, false, false)
 	form.AddFormItem(newOptionCheckbox(d.t("automatic_summary"), c.AutoSummary, func(v bool) { c.AutoSummary = v }))
 	languages := []string{"", "zh-CN", "en", "ja"}
 	selected := 0
@@ -25,6 +25,8 @@ func (d *desktop) summarySettings() {
 	concurrency := strconv.Itoa(EffectiveSummaryConcurrency(c))
 	form.AddInputField(d.t("summary_concurrency"), concurrency, 4, nil, func(v string) { concurrency = v })
 	form.AddFormItem(newOptionCheckbox(d.t("summary_thinking"), c.SummaryThinking, func(v bool) { c.SummaryThinking = v }))
+	form.AddFormItem(newOptionCheckbox(d.t("summary_enabled"), !c.SummaryDisabled, func(v bool) { c.SummaryDisabled = !v }))
+	form.AddFormItem(newOptionCheckbox(d.t("mindmap_enabled"), c.MindmapEnabled, func(v bool) { c.MindmapEnabled = v }))
 	form.AddButton(d.t("save"), func() {
 		n, err := strconv.Atoi(concurrency)
 		if err != nil || n < 1 || n > 8 {
@@ -47,6 +49,12 @@ func (d *desktop) summarySettings() {
 		if c.SummaryThinking != original.SummaryThinking {
 			current.SummaryThinking = c.SummaryThinking
 		}
+		if c.SummaryDisabled != original.SummaryDisabled {
+			current.SummaryDisabled = c.SummaryDisabled
+		}
+		if c.MindmapEnabled != original.MindmapEnabled {
+			current.MindmapEnabled = c.MindmapEnabled
+		}
 		if err := d.s.SaveConfig(current); err != nil {
 			d.message(err)
 			return
@@ -55,7 +63,7 @@ func (d *desktop) summarySettings() {
 	})
 	form.AddButton(d.t("back"), d.closeModal)
 	form.SetCancelFunc(d.closeModal)
-	d.popup(form, 88, 22)
+	d.popup(form, 90, 26)
 }
 
 func (d *desktop) queueSummary(id string) {
@@ -86,8 +94,9 @@ func (d *desktop) confirmQueueSummaries() {
 		return
 	}
 	var ids []string
+	c := d.s.Config()
 	for _, r := range rows {
-		if SummaryEligibleForBatch(r) {
+		if SummaryEligibleForBatch(r, c) {
 			ids = append(ids, r.ID)
 		}
 	}
@@ -95,7 +104,6 @@ func (d *desktop) confirmQueueSummaries() {
 		d.setNotice(d.t("batch_summary_empty"))
 		return
 	}
-	c := d.s.Config()
 	language := c.SummaryLanguage
 	if language == "" {
 		language = c.Locale
@@ -112,7 +120,7 @@ func (d *desktop) confirmQueueSummaries() {
 			return
 		}
 		current := d.s.Config()
-		if current.SummaryThinking != c.SummaryThinking || current.SummaryLanguage != c.SummaryLanguage || current.SummaryLanguage == "" && current.Locale != c.Locale {
+		if current.SummaryDisabled != c.SummaryDisabled || current.MindmapEnabled != c.MindmapEnabled || current.SummaryThinking != c.SummaryThinking || current.SummaryLanguage != c.SummaryLanguage || current.SummaryLanguage == "" && current.Locale != c.Locale {
 			d.setNotice(d.t("batch_summary_settings_changed"))
 			return
 		}

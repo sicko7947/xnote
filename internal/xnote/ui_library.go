@@ -5,7 +5,28 @@ import (
 	"strings"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 )
+
+// Keep columns stable without making tview measure every recording on every
+// frame. The fixed header participates in visible-row measurement, so padding
+// it once when the library changes provides the same widths while scrolling.
+func (d *desktop) prepareLibraryColumns() {
+	for col := 0; col < d.library.GetColumnCount(); col++ {
+		header := d.library.GetCell(0, col)
+		label := strings.TrimRight(header.Text, " ")
+		width := tview.TaggedStringWidth(label)
+		for row := 1; row < d.library.GetRowCount(); row++ {
+			width = max(width, tview.TaggedStringWidth(d.library.GetCell(row, col).Text))
+		}
+		header.SetText(label + strings.Repeat(" ", width-tview.TaggedStringWidth(label)))
+		if col == 1 {
+			header.SetMaxWidth(max(12, d.viewportWidth-50))
+		} else if col == 3 {
+			header.SetMaxWidth(18)
+		}
+	}
+}
 
 func (d *desktop) selectRecording(row, _ int) {
 	if row > 0 && row <= len(d.hits) {

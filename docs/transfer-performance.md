@@ -110,3 +110,56 @@ a download-only ETA while actively transferring.
   Source: https://elevenlabs.io/docs/overview/capabilities/speech-to-text
 - Automatic transcription and cloud transcript import are opt-in. The default
   foreground workflow only downloads recordings, with no provider fallback.
+
+## Follow-up host-path audit, 2026-10-05
+
+- The single-recorder transfer still uses one shared audio characteristic and
+  one opcode-11 completion stream. Raw audio notifications contain no filename,
+  transfer ID or offset. Adding multiple download goroutines would give them
+  competing consumers of the same bytes and acknowledgements; it is not a safe
+  parallel-download protocol. The existing single owner also prevents a second
+  XNote process from opening another transfer against the same library.
+- `BenchmarkBLEReceiveDrain` makes the host notification-copy, queue and 64 KiB
+  buffering overhead reproducible. On this Mac (Apple M1), three one-second
+  runs measured 80–87 ns per 244-byte packet, one 256-byte allocation, and
+  0.003723 underlying writes per packet (about 269 packets per write). Its sink
+  counts bytes in memory: these figures deliberately exclude CoreBluetooth,
+  scheduling across callback threads, disk I/O, fsync and the radio. They are
+  **not** BLE throughput measurements. At the previously observed ~250 packets
+  per second, optimizing this particular copy/queue path has little headroom.
+- The current queue holds 4,096 notifications (about 976 KiB at 244 bytes each),
+  while progress updates occur at most twice per second. A larger queue or extra
+  host threads does not request more radio bandwidth. Queue overflow remains a
+  transfer failure that preserves only a contiguous prefix for resume.
+- A fresh read-only measurement on a retained 7,781,074-byte MP3 found full
+  decode validation took 4.50–5.26 seconds across three runs; reading duration
+  took 66–69 ms. At the earlier 59 KB/s radio observation that file would spend
+  about 132 seconds in transit. Overlapping validation with the next download
+  could theoretically save around 3–4% on a similar backlog, before accounting
+  for pipeline costs; this is an estimate, not a tested speedup. Validation
+  remains serialized so incomplete/unvalidated files are not published.
+- The native macOS dependency (`tinygo.org/x/bluetooth` v0.16.0) implements
+  `RequestConnectionParams` as a no-op. `GetMTU` reports the maximum write value
+  length; it is not an API for increasing incoming notification bandwidth.
+  Neither extra download threads nor an MTU setting is exposed as a misleading
+  speed control. USB/Wi-Fi capability tests remain the route to investigate a
+  materially faster transport, subject to this recorder's firmware support.
+
+Run the host benchmark without a recorder:
+
+```sh
+go test ./internal/xnote -run '^$' -bench '^BenchmarkBLEReceiveDrain$' -benchmem -benchtime=1s -count=3
+```
+
+### Read-only device verification (2026-10-05)
+
+With the TUI briefly stopped to release its exclusive connection, a signed Mac
+probe listed the device and downloaded one retained recording into a temporary
+directory. It did not change library metadata or the original recording.
+
+- 603,402 bytes transferred in 10.166 seconds: 59,354 bytes/s (about 58 KiB/s).
+- Full MP3 validation took 0.452 seconds.
+- SHA-256 matched the existing local original exactly; temporary audio removed.
+
+This confirms current single-stream throughput and integrity for one recording.
+No before/after radio speed improvement is claimed by the UI/background changes.

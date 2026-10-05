@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -67,7 +68,27 @@ type Status struct {
 	Progress       int     `json:"progress"`
 	UpdatedAt      string  `json:"updated_at"`
 }
-type Store struct{ Root string }
+type Store struct {
+	Root         string
+	recordsMu    sync.Mutex
+	recordsCache map[string]cachedRecord
+}
+
+type cachedRecord struct {
+	info   os.FileInfo
+	record Record
+}
+
+// Callers may mutate records, so cached slices and pointers never escape.
+func cloneRecord(r Record) Record {
+	r.Segments = append([]Segment(nil), r.Segments...)
+	if r.Summary != nil {
+		summary := *r.Summary
+		summary.Keywords = append([]string(nil), summary.Keywords...)
+		r.Summary = &summary
+	}
+	return r
+}
 
 func Open(root string) (*Store, error) {
 	root, err := filepath.Abs(root)
@@ -79,7 +100,7 @@ func Open(root string) (*Store, error) {
 			return nil, err
 		}
 	}
-	s := &Store{root}
+	s := &Store{Root: root}
 	if _, err = os.Stat(s.path("config.json")); errors.Is(err, os.ErrNotExist) {
 		err = s.SaveConfig(Config{Locale: "zh-CN", Serial: "HD5GA00725", Auto: true, TranscriptionConcurrency: 4, SummaryConcurrency: 2, Provider: "doway", APIKeyEnv: "XNOTE_API_KEY", Model: "whisper-1"})
 		if err != nil {
@@ -198,6 +219,9 @@ func (s *Store) Dir(r Record) string {
 	return s.path(filepath.Join("recordings", month, r.ID))
 }
 func (s *Store) Records() ([]Record, error) {
+	s.recordsMu.Lock()
+	defer s.recordsMu.Unlock()
+	cache := make(map[string]cachedRecord, len(s.recordsCache))
 	rows := []Record{}
 	err := filepath.WalkDir(s.path("recordings"), func(p string, d os.DirEntry, e error) error {
 		if e != nil {
@@ -206,16 +230,31 @@ func (s *Store) Records() ([]Record, error) {
 		if d.Name() != "metadata.json" || d.IsDir() {
 			return nil
 		}
-		var r Record
-		if e = readJSON(p, &r); e != nil {
-			return fmt.Errorf("read metadata %s: %w", p, e)
+		info, e := d.Info()
+		if e != nil {
+			return e
 		}
-		if !safePart(r.ID) {
-			return errors.New("invalid recording identity")
+		entry, ok := s.recordsCache[p]
+		// Stat every metadata file: a second CLI can edit, add, or delete
+		// records. SameFile also detects atomic replacements with preserved
+		// modification times and sizes.
+		if !ok || !os.SameFile(entry.info, info) || entry.info.Size() != info.Size() || !entry.info.ModTime().Equal(info.ModTime()) {
+			var r Record
+			if e = readJSON(p, &r); e != nil {
+				return fmt.Errorf("read metadata %s: %w", p, e)
+			}
+			if !safePart(r.ID) {
+				return errors.New("invalid recording identity")
+			}
+			entry = cachedRecord{info: info, record: r}
 		}
-		rows = append(rows, r)
+		cache[p] = entry
+		rows = append(rows, cloneRecord(entry.record))
 		return nil
 	})
+	if err == nil {
+		s.recordsCache = cache
+	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].RecordedAt > rows[j].RecordedAt })
 	return rows, err
 }
@@ -255,24 +294,26 @@ func (s *Store) save(r Record) error {
 		}
 	}
 	if r.Transcript != "" || r.State == "no_speech" {
-		md := fmt.Sprintf("# %s\n\nRecorded: %s\nDevice: %s\nID: %s\nAudio: [audio.mp3](audio.mp3)\nTranscription: %s\n\n%s\n", strings.ReplaceAll(r.Title, "\n", " "), r.RecordedAt, r.Serial, r.ID, r.Provider, r.Transcript)
+		var md strings.Builder
 		if len(r.Segments) > 0 {
-			md = fmt.Sprintf("# %s\n\nRecorded: %s\nID: %s\nAudio: [audio.mp3](audio.mp3)\n\n", strings.ReplaceAll(r.Title, "\n", " "), r.RecordedAt, r.ID)
+			fmt.Fprintf(&md, "# %s\n\nRecorded: %s\nID: %s\nAudio: [audio.mp3](audio.mp3)\n\n", strings.ReplaceAll(r.Title, "\n", " "), r.RecordedAt, r.ID)
 			for _, seg := range r.Segments {
 				label := clockTime(seg.Start)
 				if seg.Timing == "chunk" {
 					label += " (chunk start; approximate)"
 				}
-				md += fmt.Sprintf("## %s %s\n\n%s\n\n", label, seg.Speaker, seg.Text)
+				fmt.Fprintf(&md, "## %s %s\n\n%s\n\n", label, seg.Speaker, seg.Text)
 			}
 			if e := atomicJSON(filepath.Join(dir, "segments.json"), r.Segments); e != nil {
 				return e
 			}
+		} else {
+			fmt.Fprintf(&md, "# %s\n\nRecorded: %s\nDevice: %s\nID: %s\nAudio: [audio.mp3](audio.mp3)\nTranscription: %s\n\n%s\n", strings.ReplaceAll(r.Title, "\n", " "), r.RecordedAt, r.Serial, r.ID, r.Provider, r.Transcript)
 		}
 		if r.State == "no_speech" {
-			md += "\n_No speech detected by the transcription provider._\n"
+			md.WriteString("\n_No speech detected by the transcription provider._\n")
 		}
-		if e := atomicWrite(filepath.Join(dir, "transcript.md"), []byte(md)); e != nil {
+		if e := atomicWrite(filepath.Join(dir, "transcript.md"), []byte(md.String())); e != nil {
 			return e
 		}
 	}

@@ -24,6 +24,8 @@ type desktop struct {
 	rows                   []Record
 	locale                 string
 	refreshRequests        chan struct{}
+	loadedVersion          string
+	libraryReadError       string
 	layoutSignature        string
 	ctx                    context.Context
 	app                    *tview.Application
@@ -59,7 +61,12 @@ func UI(ctx context.Context, s *Store) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer PlayerClose()
+	screen, err := tcell.NewScreen()
+	if err != nil {
+		return err
+	}
 	d := newDesktop(ctx, s)
+	d.app.SetScreen(newFrameScreen(screen))
 	d.refreshRequests = make(chan struct{}, 1)
 	go d.loadLibrary(ctx)
 	go func() {
@@ -95,7 +102,7 @@ func UI(ctx context.Context, s *Store) error {
 			case e := <-engineErrors:
 				d.app.QueueUpdateDraw(func() { d.message(e) })
 			case <-ticker.C:
-				d.app.QueueUpdateDraw(d.refresh)
+				d.requestLibraryRefresh()
 			}
 		}
 	}()
@@ -120,7 +127,7 @@ func newDesktop(ctx context.Context, s *Store) *desktop {
 	tview.Styles.TitleColor = teal
 	d.header = tview.NewTextView().SetDynamicColors(true)
 	d.notice = tview.NewTextView().SetTextColor(dim).SetDynamicColors(true).SetWrap(false)
-	d.library = tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSeparator(' ').SetEvaluateAllRows(true).
+	d.library = tview.NewTable().SetSelectable(true, false).SetFixed(1, 0).SetSeparator(' ').SetEvaluateAllRows(false).
 		SetSelectedStyle(tcell.StyleDefault.Background(teal).Foreground(background).Bold(true))
 	d.library.SetBorderPadding(0, 0, 1, 1)
 	d.detail = tview.NewTextView().SetDynamicColors(true).SetRegions(true).SetWordWrap(true)
@@ -245,36 +252,9 @@ func (d *desktop) record() (Record, bool) {
 	return Record{}, false
 }
 
-// Only the UI goroutine owns rows and widgets. Disk reads run in one worker;
-// bursts of refresh requests coalesce instead of queuing behind user input.
-func (d *desktop) loadLibrary(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-d.refreshRequests:
-			rows, err := d.s.Records()
-			if ctx.Err() != nil {
-				return
-			}
-			d.app.QueueUpdateDraw(func() {
-				if err != nil {
-					d.message(err)
-					return
-				}
-				d.rows = rows
-				d.renderLibrary()
-			})
-		}
-	}
-}
-
 func (d *desktop) refresh() {
 	if d.refreshRequests != nil {
-		select {
-		case d.refreshRequests <- struct{}{}:
-		default:
-		}
+		d.requestLibraryRefresh()
 	} else {
 		rows, err := d.s.Records()
 		if err != nil {
@@ -318,6 +298,7 @@ func (d *desktop) renderLibrary() {
 	if signature != d.signature {
 		d.signature = signature
 		selection, _ := d.library.GetSelection()
+		previousSelection, previousID := selection, d.selected
 		selection = max(1, min(selection, len(d.hits)))
 		d.library.SetSelectionChangedFunc(nil).Clear()
 		for col, label := range []string{d.t("recorded_at"), d.t("recording_name"), d.t("duration"), d.t("state")} {
@@ -340,9 +321,15 @@ func (d *desktop) renderLibrary() {
 				selection = i + 1
 			}
 		}
+		d.prepareLibraryColumns()
 		if len(d.hits) > 0 {
 			d.selected = d.hits[selection-1].Record.ID
-			d.library.Select(selection, 0)
+			// A wheel scroll intentionally leaves the selected row offscreen.
+			// Select, even with the same row, tells tview to jump back to it on
+			// the next draw. A metadata refresh must not undo the user's scroll.
+			if selection != previousSelection || d.selected != previousID {
+				d.library.Select(selection, 0)
+			}
 		} else {
 			d.selected = ""
 		}

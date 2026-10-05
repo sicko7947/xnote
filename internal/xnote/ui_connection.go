@@ -138,11 +138,11 @@ func (d *desktop) providerStatus() {
 	d.popup(view, 78, 13)
 	go func() {
 		result := Doctor(d.s)
-		status := d.t("provider_unreachable")
-		if result["codex_proxy_ready"] == true {
-			status = d.t("provider_reachable")
-		}
 		d.app.QueueUpdateDraw(func() {
+			status := d.t("provider_unreachable")
+			if result["codex_proxy_ready"] == true {
+				status = d.t("provider_reachable")
+			}
 			if d.modalContent != view {
 				return
 			}

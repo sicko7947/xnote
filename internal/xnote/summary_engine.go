@@ -3,6 +3,7 @@ package xnote
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -80,6 +81,8 @@ func summaryLoopWithDeps(ctx context.Context, s *Store, d summaryLoopDeps) {
 	}()
 	last := summaryFinished{}
 	phase := "idle"
+	var published SummaryStatus
+	var publishedAt time.Time
 	for ctx.Err() == nil {
 		c := s.Config()
 		limit := EffectiveSummaryConcurrency(c)
@@ -181,7 +184,13 @@ func summaryLoopWithDeps(ctx context.Context, s *Store, d summaryLoopDeps) {
 		} else if len(st.Active) == 0 && queued > 0 {
 			st.Phase, st.Detail = "waiting", "Waiting for transcription to complete"
 		}
-		s.writeSummaryStatus(st)
+		// Status is ephemeral, but each atomic write includes fsync. Publish
+		// changes immediately and keep a heartbeat without rewriting idle state
+		// twice per second.
+		if !reflect.DeepEqual(st, published) || time.Since(publishedAt) >= 10*time.Second {
+			s.writeSummaryStatus(st)
+			published, publishedAt = st, time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return

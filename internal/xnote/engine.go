@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
@@ -347,6 +348,8 @@ func transcriptionLoopWithDeps(ctx context.Context, s *Store, d transcriptionLoo
 			last.Err = err
 		}
 	}
+	var published TranscriptionStatus
+	var publishedAt time.Time
 	for ctx.Err() == nil {
 		// Apply all completed requests (including provider backoff) before
 		// filling newly available slots.
@@ -469,7 +472,13 @@ func transcriptionLoopWithDeps(ctx context.Context, s *Store, d transcriptionLoo
 		if config.TranscriptionPaused {
 			st.Phase = "paused"
 		}
-		s.writeTranscriptionStatus(st)
+		// Status is ephemeral, but each atomic write includes fsync. Publish
+		// changes immediately and keep a heartbeat without rewriting idle state
+		// twice per second.
+		if !reflect.DeepEqual(st, published) || time.Since(publishedAt) >= 10*time.Second {
+			s.writeTranscriptionStatus(st)
+			published, publishedAt = st, time.Now()
+		}
 		select {
 		case <-ctx.Done():
 			return

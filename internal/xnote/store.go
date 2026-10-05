@@ -13,39 +13,50 @@ import (
 )
 
 type Config struct {
-	Locale           string `json:"locale"`
-	Serial           string `json:"device_serial"`
-	DeviceID         string `json:"device_id"`
-	Auto             bool   `json:"automatic"`
-	Provider         string `json:"provider"`
-	FallbackProvider string `json:"fallback_provider,omitempty"`
-	Language         string `json:"transcription_language"`
-	APIURL           string `json:"api_url"`
-	APIKeyEnv        string `json:"api_key_env"`
-	Model            string `json:"api_model"`
-	OfflineModel     string `json:"offline_model"`
+	Locale                   string `json:"locale"`
+	Serial                   string `json:"device_serial"`
+	DeviceID                 string `json:"device_id"`
+	Auto                     bool   `json:"automatic"`
+	AutoTranscribe           bool   `json:"automatic_transcription"`
+	AutoSummary              bool   `json:"automatic_summary"`
+	SummaryConcurrency       int    `json:"summary_concurrency"`
+	SummaryLanguage          string `json:"summary_language"`
+	SummaryThinking          bool   `json:"summary_thinking"`
+	TranscriptionConcurrency int    `json:"transcription_concurrency"`
+	TranscriptionPaused      bool   `json:"transcription_paused"`
+	DOWAYPublicUpload        bool   `json:"doway_public_upload"`
+	Provider                 string `json:"provider"`
+	Language                 string `json:"transcription_language"`
+	APIURL                   string `json:"api_url"`
+	APIKeyEnv                string `json:"api_key_env"`
+	Model                    string `json:"api_model"`
+	OfflineModel             string `json:"offline_model"`
 }
 type Record struct {
-	TitleSource     string    `json:"title_source,omitempty"`
-	Duration        float64   `json:"duration_seconds,omitempty"`
-	CloudUID        string    `json:"cloud_uid,omitempty"`
-	Segments        []Segment `json:"segments,omitempty"`
-	DownloadSeconds float64   `json:"download_seconds,omitempty"`
-	DownloadBytes   int64     `json:"download_bytes,omitempty"`
-	ID              string    `json:"id"`
-	Serial          string    `json:"device_serial"`
-	DeviceName      string    `json:"device_filename"`
-	Title           string    `json:"title"`
-	RecordedAt      string    `json:"recorded_at"`
-	Size            int64     `json:"size_bytes"`
-	OnDevice        bool      `json:"on_device"`
-	Audio           string    `json:"audio_path,omitempty"`
-	Transcript      string    `json:"transcript,omitempty"`
-	Provider        string    `json:"provider,omitempty"`
-	State           string    `json:"state"`
-	Error           string    `json:"error,omitempty"`
-	Trashed         bool      `json:"trashed"`
-	UpdatedAt       string    `json:"updated_at"`
+	SummaryState     string         `json:"summary_state,omitempty"`
+	SummaryError     string         `json:"summary_error,omitempty"`
+	SummaryInputHash string         `json:"summary_input_hash,omitempty"`
+	Summary          *SummaryResult `json:"summary,omitempty"`
+	TitleSource      string         `json:"title_source,omitempty"`
+	Duration         float64        `json:"duration_seconds,omitempty"`
+	CloudUID         string         `json:"cloud_uid,omitempty"`
+	Segments         []Segment      `json:"segments,omitempty"`
+	DownloadSeconds  float64        `json:"download_seconds,omitempty"`
+	DownloadBytes    int64          `json:"download_bytes,omitempty"`
+	ID               string         `json:"id"`
+	Serial           string         `json:"device_serial"`
+	DeviceName       string         `json:"device_filename"`
+	Title            string         `json:"title"`
+	RecordedAt       string         `json:"recorded_at"`
+	Size             int64          `json:"size_bytes"`
+	OnDevice         bool           `json:"on_device"`
+	Audio            string         `json:"audio_path,omitempty"`
+	Transcript       string         `json:"transcript,omitempty"`
+	Provider         string         `json:"provider,omitempty"`
+	State            string         `json:"state"`
+	Error            string         `json:"error,omitempty"`
+	Trashed          bool           `json:"trashed"`
+	UpdatedAt        string         `json:"updated_at"`
 }
 type Status struct {
 	BytesPerSecond float64 `json:"bytes_per_second,omitempty"`
@@ -70,7 +81,7 @@ func Open(root string) (*Store, error) {
 	}
 	s := &Store{root}
 	if _, err = os.Stat(s.path("config.json")); errors.Is(err, os.ErrNotExist) {
-		err = s.SaveConfig(Config{Locale: "zh-CN", Serial: "HD5GA00725", Provider: "codex", APIKeyEnv: "XNOTE_API_KEY", Model: "whisper-1"})
+		err = s.SaveConfig(Config{Locale: "zh-CN", Serial: "HD5GA00725", Auto: true, TranscriptionConcurrency: 4, SummaryConcurrency: 2, Provider: "doway", APIKeyEnv: "XNOTE_API_KEY", Model: "whisper-1"})
 		if err != nil {
 			return nil, err
 		}
@@ -123,19 +134,40 @@ func (s *Store) SaveConfig(c Config) error {
 	default:
 		return errors.New("unsupported provider")
 	}
-	switch c.FallbackProvider {
-	case "", "codex", "api", "offline", "elevenlabs":
-	default:
-		return errors.New("unsupported fallback provider")
+	if c.TranscriptionConcurrency < 0 || c.TranscriptionConcurrency > 16 {
+		return errors.New("transcription_concurrency must be between 1 and 16 (or 0 for the default)")
 	}
-	if c.FallbackProvider != "" && c.FallbackProvider == c.Provider {
-		return errors.New("fallback provider must differ from primary provider")
+	if c.SummaryConcurrency < 0 || c.SummaryConcurrency > 8 {
+		return errors.New("summary_concurrency must be between 1 and 8 (or 0 for the default)")
+	}
+	switch c.SummaryLanguage {
+	case "", "zh-CN", "en", "ja":
+	default:
+		return errors.New("summary_language must be empty, zh-CN, en, or ja")
 	}
 	if !safePart(c.Serial) {
 		return errors.New("invalid device serial")
 	}
 	return atomicJSON(s.path("config.json"), c)
 }
+
+// EffectiveTranscriptionConcurrency preserves the default for older libraries
+// whose configuration does not yet contain a concurrency setting.
+func EffectiveTranscriptionConcurrency(c Config) int {
+	if c.TranscriptionConcurrency == 0 {
+		return 4
+	}
+	return max(1, min(16, c.TranscriptionConcurrency))
+}
+
+// EffectiveSummaryConcurrency keeps older libraries at the default of two jobs.
+func EffectiveSummaryConcurrency(c Config) int {
+	if c.SummaryConcurrency == 0 {
+		return 2
+	}
+	return max(1, min(8, c.SummaryConcurrency))
+}
+
 func safePart(s string) bool {
 	if s == "" {
 		return false
@@ -244,6 +276,26 @@ func (s *Store) save(r Record) error {
 			return e
 		}
 	}
+	summaryPath := filepath.Join(dir, "summary.md")
+	if r.Summary != nil {
+		var summary strings.Builder
+		fmt.Fprintf(&summary, "# %s\n\n", strings.Join(strings.Fields(r.Summary.Title), " "))
+		if r.Summary.Warning != "" {
+			fmt.Fprintf(&summary, "> Note: %s\n\n", strings.Join(strings.Fields(r.Summary.Warning), " "))
+		}
+		if len(r.Summary.Keywords) > 0 {
+			keywords := make([]string, len(r.Summary.Keywords))
+			for i, keyword := range r.Summary.Keywords {
+				keywords[i] = strings.Join(strings.Fields(keyword), " ")
+			}
+			fmt.Fprintf(&summary, "Keywords: %s\n\n", strings.Join(keywords, ", "))
+		}
+		summary.WriteString(strings.TrimSpace(r.Summary.Markdown))
+		summary.WriteByte('\n')
+		if err := atomicWrite(summaryPath, []byte(summary.String())); err != nil {
+			return err
+		}
+	}
 	return atomicJSON(filepath.Join(dir, "metadata.json"), r)
 }
 func (s *Store) Update(id string, fn func(*Record)) error {
@@ -318,7 +370,7 @@ func (s *Store) Owner() (*os.File, error) {
 	}
 	if e = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); e != nil {
 		f.Close()
-		return nil, errors.New("sync service already running")
+		return nil, errors.New("sync already running in another process")
 	}
 	return f, nil
 }

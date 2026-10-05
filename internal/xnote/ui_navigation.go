@@ -170,10 +170,6 @@ func (d *desktop) accountMenu() {
 func (d *desktop) advancedMenu() {
 	list := tview.NewList().ShowSecondaryText(false)
 	list.SetBorder(true).SetTitle(d.t("advanced"))
-	list.AddItem(d.t("service"), "", 0, func() {
-		d.closeModal()
-		d.async(func() error { d.cancelEngine(); <-d.engineDone; return Service(d.s, "install") })
-	})
 	list.AddItem(d.t("diagnostics"), "", 0, func() {
 		d.closeModal()
 		b, _ := json.MarshalIndent(Doctor(d.s), "", "  ")

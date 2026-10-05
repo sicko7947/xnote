@@ -1,6 +1,6 @@
 # X NOTE
 
-一个 Linux / macOS 终端录音库。使用设备已有绑定自动连接、下载、转写；关闭界面后可由后台服务继续工作。
+一个 Linux / macOS 终端录音库。使用设备已有绑定自动连接、下载录音；默认只下载，转写由设置或手动操作启用。TUI 或 `watch` 运行期间持续同步，退出程序后停止。
 
 ## 使用
 
@@ -14,37 +14,35 @@ scripts/build.sh
 默认目录：`~/Documents/XNote`。无需 Python。已在 Apple Silicon Mac 和 X NOTE
 HD5GA00725 上验证原生蓝牙连接、下载及 Codex Dictate 转写。
 
-### Linux 自动运行
+### 终端内自动同步
 
-需要运行中的 BlueZ、已开启的蓝牙适配器，以及播放用的 `mpv`。`ffmpeg` 用于可选离线转写。
+macOS 需要开启蓝牙，并允许启动 XNote 的终端访问蓝牙。Linux 需要运行中的 BlueZ、
+已开启的蓝牙适配器，以及播放用的 `mpv`。`ffmpeg` 用于可选离线转写。
 
 ```sh
 scripts/build.sh
 ./dist/xnote config device_serial HD5GA00725  # 改成自己设备的序列号
 ./dist/xnote config automatic true
-./dist/xnote config provider codex
-./dist/xnote config fallback_provider elevenlabs  # 可选，需下方的 Key
+./dist/xnote config automatic_transcription false  # 默认只下载
+./dist/xnote config provider doway  # 按设置选择，不自动切换服务
 ./dist/xnote doctor
-./dist/xnote service install
-~/.local/bin/xnote
+./dist/xnote
 ```
 
-Linux 使用 `systemd --user` 的 `xnote.service`，登录后启动，关闭 TUI 后继续同步。
 需要手机 DOWAY 释放蓝牙连接，并让录音器处于开机、可广播状态；充电本身不证明设备正在广播。
-`c` 查看连接详情；`xnote status` 输出供 Agent 使用的 JSON。
+`c` 查看连接详情；`./dist/xnote status` 输出供 Agent 使用的 JSON。
+
+在仓库目录的 tmux 中，可以在旁边新开一个 pane 运行 TUI：
 
 ```sh
-xnote service status
-journalctl --user -u xnote.service -f
-xnote service stop
-xnote service start
+tmux split-window -h -c "$PWD" './dist/xnote'
 ```
 
-设备离开后持续重试，启动时蓝牙未就绪也会等待。Linux 服务有 90 秒 systemd watchdog：
-只在同步状态持续更新时保活，底层 BlueZ 调用卡住会触发重启。该保护属于后台服务；
-直接运行 TUI / `watch` 不具备 systemd 监督。用户服务默认随登录会话运行，电脑睡眠时不能同步。
+只需要同步时可运行 `./dist/xnote watch`，用 Ctrl+C 停止。TUI 中按 `q` 退出。
+tmux detach 后，只要该 pane 的进程仍在运行就会继续同步；退出 XNote 或关闭该 pane 后停止。
+设备离开后持续重试，启动时蓝牙未就绪也会等待。电脑睡眠时不能同步。
 
-Key 放在录音库的 `.env`，CLI、TUI 和后台服务都会读取，已导出的环境变量优先：
+Key 放在录音库的 `.env`，CLI、TUI 和 `watch` 都会读取，已导出的环境变量优先：
 
 ```sh
 cp .env.example ~/Documents/XNote/.env
@@ -53,43 +51,88 @@ chmod 600 ~/Documents/XNote/.env
 ```
 
 也可用 `XNOTE_ENV_FILE=/absolute/private.env` 指定文件。支持 `KEY=value`、单/双引号和
-`export KEY=value`，值按字面读取，不执行 shell 命令、不展开变量。修改环境文件后重启后台服务。
+`export KEY=value`，值按字面读取，不执行 shell 命令、不展开变量。修改环境文件后重新启动 XNote。
 
 - **Tab / Shift+Tab** 切换区域和按钮；**/** 搜索正文、标题和说话人；**?** 查看帮助。
 - **n** 列出匹配的时间片段；**g** 输入时间跳转；**[ / ]** 上下片段；**m** 操作；列表里 **q** 退出。
 - 列表和详情显示已下载音频时长，不必先播放；底部始终标明实际播放的录音。
-- **设置 → 常规**：中文 / English / 日本語、自动流程、转写方式、录音语言。
+- **设置 → 常规**：中文 / English / 日本語、自动下载、自动转写、转写方式、录音语言、转写并发数。自动转写默认关闭。
 - 设置 → 账号：DOWAY 登录和云端同步；无需登录即可使用本地流程。
 - **Enter / 双击** 查看正文，**Esc** 回录音库，**空格** 播放所选 / 暂停 / 继续；「操作」只放当前录音的重命名、转写、文件夹和删除。
 - 底部 **播放所选**：点击进度条定位，←/→ 跳转 10 秒，空格暂停，+ 切换倍速。
-- 设置 → 高级 → 开机自动同步：安装当前用户的 systemd 服务（Linux）或 LaunchAgent（macOS），退出界面后继续同步。
 - 本地回收站可以恢复；删除设备原件需要输入 `DELETE`，不会删除本地副本。
-- 自动模式包含设备中已有录音。断线自动重连、部分文件续传；不自动删除设备文件。
+- 自动下载包含设备中已有录音。断线自动重连、部分文件续传；不自动删除设备文件。
 - 真正的转写失败不会无限重试消耗额度；菜单里可重试。空转写单独标为“未识别到语音”。
 
 ## 转写方式
 
-- **codex**：调用已有的 Codex Dictate 本机代理 `127.0.0.1:8377`。代理独立管理登录，
-  xnote 不读取 Codex 凭据。实际音频会由代理发送到它配置的服务。
-- **elevenlabs**：使用 ElevenLabs Scribe v2，默认读取 `ELEVENLABS_API_KEY`，返回说话人及真实时间片段。
-  用 `xnote config provider elevenlabs` 或常规设置选择；Key 可放入上面的私有 `.env`。
-  `fallback_provider` 只在主服务的本地预检不可用时选备用，例如 Codex 代理未启动。
-  预检不验证远端登录或额度；已提交请求的鉴权、额度或网络失败仍显示错误，修复后手动重试，避免反复收费。
-- **api**：配置 HTTPS multipart 转写地址、模型和 API Key 环境变量名。
-  支持纯文字及 `segments`（start/end/speaker/text）。设置内可选择 `whisper-1` 时间戳或
-  `gpt-4o-transcribe-diarize` 说话人预设。后台环境与交互 shell 不同，推荐使用录音库 `.env`；
-  `doctor` 检查当前进程的配置，缺少服务或 Key 时保留待处理队列，稍后自动检查。
-- **offline**：调用本地 `whisper-cli`（whisper.cpp）、模型文件和 `ffmpeg`。
-  这些可选模型/工具不包含在 binary 中。Go 版这一模式尚未做真实模型验收。
-- **DOWAY**：邮箱登录及云端列表已有实现，云端已有标题和结构化转写的读取/导入已实现，真实账号登录仍未通过验收。
-  登录后以显式云端 ID 或唯一的精确音频 MD5 匹配自动关联，每 5 分钟更新；不猜日期。
-  手动标题保留，旧转写归档到 history。不能自动匹配的录音可在云端列表明确选择并导入。
-  云端上传、额度转写和分享尚未完成。
+常规设置按 **DOWAY → ElevenLabs → Codex Dictate → 自带 API → 离线** 排列，默认选择 DOWAY。
+只使用当前选择的服务，不做自动 fallback。默认关闭自动转写及自动云端导入；登录不会立即导入旧转写。
+下载和手动排队的转写可以同时工作；想自动处理新下载的录音，可开启“自动转写”。
 
-长录音自动分段，优先在较安静处切分；已成功片段缓存，失败后重试可继续。
-Codex 当前只返回文字：长录音的 `≈` 是分段起点，并非逐句时间戳，不会伪造说话人。
-支持说话人的 API 片段显示时间与标签；跨请求的说话人标签保持独立，避免错误合并。
-点击转写里的时间点可直接播放对应位置。OpenAI 兼容 API 的说话人模式已做请求/解析测试，尚未用真实 API Key 验收。
+转写默认同时处理 **4 条录音**，在 **设置 → 常规 → 转写并发数** 调整为 1–16，保存后立即生效。
+降低并发数会等待已有请求完成；不会取消、重新提交正在处理的录音。顶部显示运行、排队和并发上限，
+`c` 查看所有运行中的任务。**m → 转写全部待处理录音** 会先显示数量，再将确认时仍未转写的下载录音排队；
+**m → 暂停转写队列 / 继续转写队列** 控制新任务启动，让运行中的任务完成，不改变自动转写设置。
+手动排队优先于自动处理。并发上限是客户端同时处理的录音数，远端服务仍可能限流。
+
+```sh
+xnote config transcription_concurrency 4
+xnote config transcription_paused true   # 等待运行中的任务完成
+xnote config transcription_paused false  # 继续队列
+```
+
+- **DOWAY**：邮箱登录后可手动转写本机已下载录音；包含额度验证、上传、任务提交、轮询及结果恢复。需要在常规设置选择录音语言，并在 DOWAY 设置明确允许原 App 的上传方式。
+  该方式在处理期间提供可直接下载的录音链接，持链接即可读取；终态后清理上传副本。本地录音保留。上传许可默认关闭。
+  设置 → 账号可手动同步或明确选择云端记录导入；开启自动转写后每 5 分钟同步已完成的云端结果。
+  仅以明确云端 ID 或唯一的精确音频 MD5 关联，不猜日期；手动标题保留，旧转写归档到 history。
+  原 App 未提供已验证的全语种自动识别请求；中文、英文、日文等明确语言已接入。中断后保留任务，不盲目重复提交。[协议和验证范围](docs/doway-transcription.md)。
+- **ElevenLabs**：Scribe v2，读取 `ELEVENLABS_API_KEY`，返回说话人和真实时间片段。
+  Key 可放在录音库私有 `.env`；选择 `xnote config provider elevenlabs`。
+  录音语言设为 Auto 时省略语言提示，由服务自动识别；`xnote config transcription_language auto`。
+  在服务支持范围内直接流式上传原始录音，保留整段说话人标记，避免先转为多段 WAV 的额外流量。
+- **Codex Dictate**：可选，调用已有的本机代理 `127.0.0.1:8377`。
+  代理独立管理登录，XNote 不读取 Codex 凭据；音频由代理发送到它配置的服务。
+  当前只返回文字；长录音中的 `≈` 表示分段起点，并非逐句时间戳，不会伪造说话人。
+- **自带 API**：配置 HTTPS multipart 地址、模型和 Key 环境变量名。
+  支持纯文字及 `segments`（start/end/speaker/text），可选择 `whisper-1` 时间戳或
+  `gpt-4o-transcribe-diarize` 说话人预设。真实 API Key 尚待验收。
+- **离线**：需要本地 `whisper-cli`（whisper.cpp）、模型和 `ffmpeg`。
+  可选模型/工具不包含在 binary 中，Go 版真实模型尚待验收。
+
+`doctor` 只检查本机依赖、配置和服务连接；不验证远端额度。缺少依赖时保留待处理队列。
+已提交请求的鉴权、额度或网络失败会显示错误，修复后手动重试，避免重复收费。
+HTTP 429 明确拒绝请求时，按服务端等待时间暂停该服务的新任务，最多自动重试两次；其他失败不自动重放。
+需要客户端分段的服务会缓存成功片段，重试可继续；不同请求的说话人标签保持独立。
+点击转写时间点可跳转播放。默认只下载时不会提交录音或导入云端转写。
+
+## AI 标题与摘要
+
+**设置 → AI 标题与摘要** 配置 DOWAY 文字后处理。它使用已有的 DOWAY 登录，与转写服务独立，
+ElevenLabs、Codex Dictate 等已完成的转写也能生成标题、关键词及 Markdown 摘要。
+摘要语言可跟随界面，或指定中文、英文、日文；摘要并发默认 **2**，可调为 **1–8**，独立于转写并发。
+支持的 Qwen 模型默认使用快速模式；可打开“深度思考”提高复杂内容的分析深度，通常需要更多时间。
+其他模型保留服务端的模式，不向不支持的模型发送该参数。
+修改摘要语言或思考模式只影响后续新任务，不会自动重算相同输入的已完成摘要。
+
+- 选中已转写录音，**m → 生成 AI 摘要**（或 `i`）；请求前失败或服务端明确拒绝时可在同一入口手动重试，请求结果不明时不会重发。
+- **m → 生成全部待摘要录音**（菜单内 `I`）先确认数量，再批量排队；已有相同内容的成功摘要不会重复生成。
+- 开启“新转写完成后自动生成摘要”，只处理之后完成的新转写，不回填历史录音。新录音库默认关闭该开关。
+- 详情同时显示 AI 标题、关键词、摘要和原始转写。默认日期标题会替换为生成标题；手动或云端标题保留，AI 建议标题仍可在详情查看。
+- `summary.md` 单独导出；原录音、`transcript.md` 和逐句时间轴保留。摘要失败不影响已完成的转写。
+- 当前没有独立的带时间戳章节功能；Markdown 摘要可能包含模板生成的章节标题。
+
+```sh
+xnote config automatic_summary true
+xnote config summary_concurrency 2
+xnote config summary_thinking false   # 支持的 Qwen 模型；true 开启深度思考
+xnote config summary_language zh-CN   # en / ja；空值跟随界面
+xnote summarize RECORDING_ID          # TUI 或 watch 运行时处理
+```
+
+DOWAY 模型配置通过当前登录会话向服务端取得，模型及鉴权以该响应为准；不自动切换其他 AI 服务。
+生成和用量登记各自保存进度；已经取得的结果会保留，登记未确认时显示警示，不自动重复生成或重复登记。
+[协议与验证范围](docs/doway-summary.md)。
 
 界面使用 [tview](https://github.com/rivo/tview) 表格、表单、下拉框和鼠标事件。
 主界面是一张录音表：录制时间、标题 / 摘录、时长、处理状态。
@@ -126,16 +169,16 @@ Codex 当前只返回文字：长录音的 `≈` 是分段起点，并非逐句�
 
 ## 连接和设置的状态
 
-顶部把 **设备连接、自动重连、自动处理** 分开显示。开启自动处理不代表蓝牙已经连接。
-按 **c**（或设置 → 连接详情）查看记住的设备、当前连接、最近状态更新时间和后台同步是否安装。
-后台或程序运行时会自动重连；自动处理开关只控制下载和转写，不关闭重连。
+顶部区分 **设备连接、自动重连、自动下载、自动转写**。开启自动下载不代表蓝牙已经连接。
+按 **c**（或设置 → 连接详情）查看记住的设备、当前连接和最近状态更新时间。
+TUI 或 `watch` 运行时会自动重连；自动下载与自动转写各自控制，不关闭重连。
 超过 45 秒没有状态更新时显示同步未运行，不沿用旧的“已连接”。
 
-- 常规：语言、自动处理、转写方式和录音语言均可保存；Ctrl+S 保存，Esc 取消。
+- 常规：语言、自动下载、自动转写、转写方式和录音语言均可保存；Ctrl+S 保存，Esc 取消。
 - Codex：转写方式页面会检查本机代理连接；当前返回文字，不能提供真正的说话人识别。
 - 自带 API / 离线：需要配置服务与 Key，或本地模型及依赖；真实可用性需要实际转写验证。
-- DOWAY：需有效登录会话才能读取云端数据；新的云端转写提交仍未完成认证协议验收。
-- 开机后台同步：需要安装用户级 systemd 服务或 LaunchAgent。安装状态和当前蓝牙连接是不同的状态。
+- DOWAY：需有效登录会话、对应录音器和明确录音语言；是否允许转写由服务端额度验证决定。
+- 同步随 TUI 或 `watch` 进程运行；`status`、`list` 等一次性 CLI 命令不会启动持续同步。
 
 ## AI / CLI
 
@@ -150,11 +193,9 @@ xnote show HD5GA00725-20260709220314 --json
 xnote status
 xnote doctor
 xnote transcribe RECORDING_ID
+xnote summarize RECORDING_ID
 xnote download RECORDING_ID
 xnote --data /absolute/library watch
-xnote service install
-xnote service status
-xnote service stop
 ```
 
 `--data` 是全局参数，放在子命令前。JSON 输出在 stdout，错误在 stderr。
@@ -167,9 +208,10 @@ xnote service stop
   recordings/2026/09/HD5GA00725-20260929104048/
     audio.mp3
     transcript.md
+    summary.md             # 可选 AI 标题、关键词和摘要
     metadata.json
     segments.json          # 后端片段或明确标注的分段起点
-  .work/                 # 后台状态、锁、登录会话、尚未执行的命令
+  .work/                 # 同步状态、锁、登录会话、尚未执行的命令
 ```
 
 搜索 JSON 的 `matches` 提供命中片段、说话人和时间；`duration_seconds` 是音频时长。
@@ -190,7 +232,7 @@ go vet ./...
 
 产物：`dist/xnote`、`dist/xnote.sha256`。本机 ad-hoc 签名，尚未做 Developer ID
 签名/Apple 公证；对外发布前仍需完成这些发布步骤。Linux 不运行 codesign。
-Linux 已验证构建、mpv 生命周期、systemd 用户服务和 Codex / ElevenLabs 真实示例音频转写；
+Linux 已验证构建、mpv 生命周期和 Codex / ElevenLabs 真实示例音频转写；
 已连接 HD5GA00725 并读取 104 条录音目录，但实体传输出现重复尾包，完整下载尚未通过验收。
 Linux 命令和音频通知使用 BlueZ `AcquireNotify` 保持接收顺序；这并未消除实机重复包。
 遇到超出预期大小的数据会丢弃不可信的本地片段；设备原录音不受影响。Wi-Fi 仍待验收。
@@ -210,7 +252,9 @@ scripts/build.sh
 ```
 
 `app_profile.json` 被 Git 忽略，构建时嵌入 binary；缺少配置时云端请求会明确报错。
-它是应用请求签名配置，不是用户登录凭据。账号登录会话始终保存在录音库的 `.work/`。
+`signing_key` 用于应用请求签名；可选的 `template_aes_key`（32 字节）和 `template_aes_iv`（16 字节）
+用于解包账号接口返回的模板与模型配置。它们不是用户登录凭据或模型供应商 API Key。
+账号登录会话始终保存在录音库的 `.work/`；模型凭据只使用登录后服务端返回的配置。
 不要把填写后的配置、个人录音、转写、账号会话或包含私有配置的构建产物提交到仓库。
 
 ## 项目结构

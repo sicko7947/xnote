@@ -21,8 +21,15 @@ func (d *desktop) menu() {
 		action := action
 		list.AddItem(d.t(action.label), "", action.key, func() { d.closeModal(); action.run() })
 	}
+	list.AddItem(d.t("batch_transcribe"), "", 'a', func() { d.closeModal(); d.confirmQueueDownloaded() })
+	list.AddItem(d.t("batch_summary"), "", 'I', func() { d.closeModal(); d.confirmQueueSummaries() })
+	pause := "queue_pause"
+	if d.s.Config().TranscriptionPaused {
+		pause = "queue_resume"
+	}
+	list.AddItem(d.t(pause), "", 'z', func() { d.closeModal(); d.toggleTranscriptionPause() })
 	list.SetDoneFunc(d.closeModal)
-	d.popup(list, 68, max(4, list.GetItemCount()+2))
+	d.popup(list, 76, max(4, list.GetItemCount()+2))
 }
 
 func (d *desktop) runAction(key rune) {

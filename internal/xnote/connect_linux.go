@@ -17,7 +17,7 @@ type bluezCall func(context.Context, dbus.ObjectPath, string, ...interface{}) ([
 // Connect implementation, which otherwise waits without a deadline and queues
 // signals while waiting. No signal subscriptions are needed here. A disconnect
 // between this successful preconnect and tinygo's Connected check can still
-// enter its unbounded branch; the service watchdog remains the final fallback.
+// enter its unbounded branch, requiring the user to restart the process.
 func preconnect(ctx context.Context, adapter *bluetooth.Adapter, address bluetooth.Address) error {
 	if err := ctx.Err(); err != nil {
 		return err

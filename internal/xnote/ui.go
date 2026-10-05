@@ -48,8 +48,6 @@ type desktop struct {
 	playingID              string
 	playingTitle           string
 	rate                   float64
-	cancelEngine           context.CancelFunc
-	engineDone             chan struct{}
 }
 
 func (d *desktop) t(k string) string { return tr(d.s.Config().Locale, k) }
@@ -67,15 +65,20 @@ func UI(ctx context.Context, s *Store) error {
 		}
 	}()
 	engineCtx, engineCancel := context.WithCancel(ctx)
-	d.cancelEngine = engineCancel
-	d.engineDone = make(chan struct{})
+	engineDone := make(chan struct{})
+	engineErrors := make(chan error, 1)
 	go func() {
-		defer close(d.engineDone)
+		defer close(engineDone)
 		if e := Run(engineCtx, s); e != nil && !strings.Contains(e.Error(), "already running") {
-			d.app.QueueUpdateDraw(func() { d.message(e) })
+			// The engine must finish even after the TUI stops processing draws.
+			engineErrors <- e
 		}
 	}()
-	defer func() { engineCancel(); <-d.engineDone }()
+	defer func() {
+		cancel()
+		engineCancel()
+		<-engineDone
+	}()
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
@@ -83,6 +86,8 @@ func UI(ctx context.Context, s *Store) error {
 			select {
 			case <-ctx.Done():
 				return
+			case e := <-engineErrors:
+				d.app.QueueUpdateDraw(func() { d.message(e) })
 			case <-ticker.C:
 				d.app.QueueUpdateDraw(d.refresh)
 			}
@@ -148,7 +153,7 @@ func newDesktop(ctx context.Context, s *Store) *desktop {
 	d.makeActions()
 	d.footer = tview.NewPages().AddPage("actions", d.actions, true, true).AddPage("hint", d.notice, true, false)
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(d.header, 2, 0, false).
+		AddItem(d.header, 3, 0, false).
 		AddItem(d.tabs, 1, 0, false).AddItem(nil, 1, 0, false).
 		AddItem(d.search, 1, 0, false).AddItem(nil, 1, 0, false).
 		AddItem(d.body, 0, 1, true).
@@ -332,6 +337,27 @@ func (d *desktop) showDetail() {
 		metadata += "  ·  " + r.Provider
 	}
 	b.WriteString("[#a4aebe]" + tview.Escape(metadata) + "[-]\n\n")
+	if r.SummaryState != "" && r.SummaryState != "none" || r.Summary != nil {
+		b.WriteString("[::b]" + d.t("summary_settings") + "[-:-:-]\n")
+		if r.SummaryState != "" && r.SummaryState != "none" {
+			b.WriteString("[#a4aebe]" + d.t("summary_"+r.SummaryState) + "[-]\n")
+		}
+		warning := r.SummaryError
+		if warning == "" && r.Summary != nil {
+			warning = r.Summary.Warning
+		}
+		if warning != "" {
+			b.WriteString("[orange]" + tview.Escape(warning) + "[-]\n")
+		}
+		if r.Summary != nil {
+			b.WriteString("[::b]" + tview.Escape(r.Summary.Title) + "[-:-:-]\n")
+			if len(r.Summary.Keywords) > 0 {
+				b.WriteString(d.t("summary_keywords") + ": " + tview.Escape(strings.Join(r.Summary.Keywords, " · ")) + "\n")
+			}
+			b.WriteString("\n" + tview.Escape(r.Summary.Markdown) + "\n")
+		}
+		b.WriteString("\n[::b]" + d.t("transcript") + "[-:-:-]\n")
+	}
 
 	if strings.TrimSpace(d.search.GetText()) != "" {
 		for _, hit := range d.hits {
@@ -448,7 +474,7 @@ func (d *desktop) prompt(title, value string, submit func(string)) {
 }
 func (d *desktop) recordActions() []recordAction {
 	var actions []recordAction
-	keys := map[string]rune{"rename": 'r', "transcribe": 't', "folder": 'f', "trash": 'x', "restore": 'u', "download": 'd', "device_delete": 'D'}
+	keys := map[string]rune{"rename": 'r', "transcribe": 't', "folder": 'f', "trash": 'x', "restore": 'u', "download": 'd', "device_delete": 'D', "generate_summary": 'i', "retry_summary": 'i'}
 	add := func(key string, fn func()) { actions = append(actions, recordAction{key, keys[key], fn}) }
 	r, ok := d.record()
 	if ok {
@@ -482,6 +508,13 @@ func (d *desktop) recordActions() []recordAction {
 		} else {
 			add("download", func() { d.message(d.s.Queue("download", r.ID)) })
 		}
+		if !r.Trashed && r.State == "done" && strings.TrimSpace(r.Transcript) != "" {
+			label := "generate_summary"
+			if r.SummaryState == "error" {
+				label = "retry_summary"
+			}
+			add(label, func() { d.queueSummary(r.ID) })
+		}
 		if r.OnDevice {
 			add("device_delete", func() { d.confirmDeviceDelete(r) })
 		}
@@ -505,7 +538,9 @@ func (d *desktop) login() {
 			if e != nil {
 				return e
 			}
-			_, e = d.s.SyncCloud(d.ctx)
+			if c := d.s.Config(); c.AutoTranscribe && c.Provider == "doway" {
+				_, e = d.s.SyncCloud(d.ctx)
+			}
 			return e
 		})
 	}).AddButton(d.t("back"), d.closeModal)
@@ -515,6 +550,7 @@ func (d *desktop) login() {
 }
 func (d *desktop) generalSettings() {
 	c := d.s.Config()
+	original := c
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle(" " + d.t("settings") + " ")
 	index := func(value string, values []string) int {
@@ -526,24 +562,43 @@ func (d *desktop) generalSettings() {
 		return 0
 	}
 	locales := []string{"zh-CN", "en", "ja"}
-	providers := []string{"codex", "elevenlabs", "api", "offline"}
-	fallbacks := []string{"", "codex", "elevenlabs", "api", "offline"}
-	languages := []string{"", "zh", "en", "ja"}
+	providers := []string{"doway", "elevenlabs", "codex", "api", "offline"}
+	languages := []string{"", "zh", "en", "ja", "ko", "fr", "es", "ru", "de", "it", "vi", "ar"}
 	form.AddDropDown(d.t("locale"), []string{"简体中文", "English", "日本語"}, index(c.Locale, locales), func(_ string, i int) { c.Locale = locales[i] })
-	form.AddDropDown(d.t("provider"), []string{"Codex Dictate · Text", "ElevenLabs · Scribe / speakers", "API · timestamps / speakers", "Offline · whisper.cpp"}, index(c.Provider, providers), func(_ string, i int) {
+	form.AddDropDown(d.t("provider"), []string{"DOWAY · " + d.t("doway_account_short"), "ElevenLabs · Scribe / speakers", "Codex Dictate · Text", "API · timestamps / speakers", "Offline · whisper.cpp"}, index(c.Provider, providers), func(_ string, i int) {
 		if c.Provider != providers[i] && providers[i] == "elevenlabs" {
 			c.APIURL, c.APIKeyEnv, c.Model = "", "", ""
 		}
 		c.Provider = providers[i]
-		if c.FallbackProvider == c.Provider {
-			c.FallbackProvider = ""
+	})
+	languageLabels := []string{"Auto", "中文", "English", "日本語", "한국어", "Français", "Español", "Русский", "Deutsch", "Italiano", "Tiếng Việt", "العربية"}
+	languageIndex := index(c.Language, languages)
+	if languageIndex == 0 && c.Language != "" {
+		languages = append(languages, c.Language)
+		languageLabels = append(languageLabels, c.Language)
+		languageIndex = len(languages) - 1
+	}
+	language := tview.NewDropDown().SetLabel(d.t("spoken")).SetOptions(languageLabels, nil).SetCurrentOption(languageIndex)
+	language.SetSelectedFunc(func(_ string, i int) {
+		if i >= 0 {
+			c.Language = languages[i]
 		}
 	})
-	form.AddDropDown(d.t("spoken"), []string{"Auto", "中文", "English", "日本語"}, index(c.Language, languages), func(_ string, i int) { c.Language = languages[i] })
-	form.AddFormItem(newOptionCheckbox(d.t("auto"), c.Auto, func(v bool) { c.Auto = v }))
-	form.AddDropDown(d.t("fallback_provider"), []string{d.t("disable"), "Codex Dictate", "ElevenLabs", "API", "Offline"}, index(c.FallbackProvider, fallbacks), func(_ string, i int) { c.FallbackProvider = fallbacks[i] })
+	form.AddFormItem(language)
+	form.AddFormItem(newOptionCheckbox(d.t("auto_download"), c.Auto, func(v bool) { c.Auto = v }))
+	form.AddFormItem(newOptionCheckbox(d.t("auto_transcribe"), c.AutoTranscribe, func(v bool) { c.AutoTranscribe = v }))
+	concurrency := strconv.Itoa(EffectiveTranscriptionConcurrency(c))
+	form.AddInputField(d.t("transcription_concurrency"), concurrency, 4, nil, func(v string) { concurrency = v })
 	form.AddButton(d.t("save"), func() {
-		if err := d.s.SaveConfig(c); err != nil {
+		n, err := strconv.Atoi(concurrency)
+		if err != nil || n < 1 || n > 16 {
+			d.setNotice(d.t("transcription_concurrency_invalid"))
+			form.SetFocus(5)
+			d.app.SetFocus(form)
+			return
+		}
+		c.TranscriptionConcurrency = n
+		if err := d.s.saveGeneralSettings(original, c); err != nil {
 			d.message(err)
 			return
 		}
@@ -554,7 +609,7 @@ func (d *desktop) generalSettings() {
 	})
 	form.AddButton(d.t("back"), d.closeModal)
 	form.SetCancelFunc(d.closeModal)
-	d.popup(form, 76, 17)
+	d.popup(form, 76, 19)
 }
 func (d *desktop) providerSettings() {
 	c := effectiveTranscriptionConfig(d.s.Config())
@@ -564,7 +619,25 @@ func (d *desktop) providerSettings() {
 	}
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle(d.t("provider"))
+	if c.Provider == "doway" {
+		form.AddTextView("DOWAY", d.t("doway_provider_help"), 64, 5, false, false)
+		form.AddTextView("", d.t("doway_public_upload_help"), 64, 3, false, false)
+		form.AddFormItem(newOptionCheckbox(d.t("doway_public_upload"), c.DOWAYPublicUpload, func(v bool) { c.DOWAYPublicUpload = v }))
+		form.AddButton(d.t("save"), func() {
+			if err := d.s.SaveConfig(c); err != nil {
+				d.message(err)
+				return
+			}
+			d.closeModal()
+		})
+		form.AddButton(d.t("account"), func() { d.closeModal(); d.accountMenu() })
+		form.AddButton(d.t("back"), d.closeModal)
+		form.SetCancelFunc(d.closeModal)
+		d.popup(form, 88, 20)
+		return
+	}
 	if c.Provider == "elevenlabs" {
+		form.AddTextView("ElevenLabs", d.t("elevenlabs_provider_help"), 60, 4, false, false)
 		form.AddInputField(d.t("api_key_env"), c.APIKeyEnv, 30, nil, func(v string) { c.APIKeyEnv = v })
 		form.AddInputField(d.t("api_model"), c.Model, 40, nil, func(v string) { c.Model = v })
 	} else if c.Provider == "api" {

@@ -59,11 +59,11 @@ func ParseDOWAYTranscript(raw json.RawMessage) (TranscriptResult, error) {
 }
 
 func (s *Store) CloudInfo(ctx context.Context, uid string) (map[string]json.RawMessage, error) {
-	var session map[string]any
-	if e := readJSON(s.path(".work/doway-session.json"), &session); e != nil {
-		return nil, errors.New("DOWAY login required")
+	session, e := s.cloudSession()
+	if e != nil {
+		return nil, e
 	}
-	data, e := cloudPost(ctx, "/api/cloud/get_file_info", map[string]any{"audioFileUid": uid, "playerId": session["playerId"], "token": session["token"]})
+	data, e := cloudPost(ctx, "/api/cloud/get_file_info", map[string]any{"audioFileUid": uid, "playerId": session.PlayerID, "token": session.Token})
 	if e != nil {
 		return nil, e
 	}

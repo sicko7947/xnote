@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -45,8 +46,8 @@ xnote [--data FOLDER] show ID --json
 xnote [--data FOLDER] status
 xnote [--data FOLDER] config [KEY VALUE]
 xnote [--data FOLDER] transcribe ID   Queue transcription (watch/TUI must run)
+xnote [--data FOLDER] summarize ID    Queue AI title and summary (watch/TUI must run)
 xnote [--data FOLDER] download ID     Queue recording download
-xnote [--data FOLDER] service install|start|stop|status
 xnote [--data FOLDER] cloud list|show UID|import LOCAL_ID CLOUD_UID
 xnote [--data FOLDER] doctor
 
@@ -154,7 +155,7 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 		if e != nil {
 			return e
 		}
-		output(map[string]any{"library": s.Root, "sync": s.Status(), "transcription": s.TranscriptionStatus(), "automatic": s.Config().Auto, "recordings": len(hits), "overview": overview})
+		output(map[string]any{"library": s.Root, "sync": s.Status(), "transcription": s.TranscriptionStatus(), "summary": s.SummaryStatus(), "automatic_summary": s.Config().AutoSummary, "summary_concurrency": xnote.EffectiveSummaryConcurrency(s.Config()), "summary_language": s.Config().SummaryLanguage, "summary_thinking": s.Config().SummaryThinking, "automatic": s.Config().Auto, "automatic_transcription": s.Config().AutoTranscribe, "transcription_concurrency": xnote.EffectiveTranscriptionConcurrency(s.Config()), "transcription_paused": s.Config().TranscriptionPaused, "recordings": len(hits), "overview": overview})
 	case "config":
 		c := s.Config()
 		if len(args) == 0 {
@@ -172,16 +173,50 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 				return errors.New("automatic must be true or false")
 			}
 			c.Auto = args[1] == "true"
+		case "automatic_transcription":
+			if args[1] != "true" && args[1] != "false" {
+				return errors.New("automatic_transcription must be true or false")
+			}
+			c.AutoTranscribe = args[1] == "true"
+		case "automatic_summary":
+			if args[1] != "true" && args[1] != "false" {
+				return errors.New("automatic_summary must be true or false")
+			}
+			c.AutoSummary = args[1] == "true"
+		case "summary_thinking":
+			if args[1] != "true" && args[1] != "false" {
+				return errors.New("summary_thinking must be true or false")
+			}
+			c.SummaryThinking = args[1] == "true"
+		case "summary_concurrency":
+			n, err := strconv.Atoi(args[1])
+			if err != nil || n < 1 || n > 8 {
+				return errors.New("summary_concurrency must be an integer between 1 and 8")
+			}
+			c.SummaryConcurrency = n
+		case "summary_language":
+			c.SummaryLanguage = args[1]
+		case "transcription_concurrency":
+			n, err := strconv.Atoi(args[1])
+			if err != nil || n < 1 || n > 16 {
+				return errors.New("transcription_concurrency must be an integer between 1 and 16")
+			}
+			c.TranscriptionConcurrency = n
+		case "transcription_paused":
+			if args[1] != "true" && args[1] != "false" {
+				return errors.New("transcription_paused must be true or false")
+			}
+			c.TranscriptionPaused = args[1] == "true"
+		case "doway_public_upload":
+			if args[1] != "true" && args[1] != "false" {
+				return errors.New("doway_public_upload must be true or false")
+			}
+			c.DOWAYPublicUpload = args[1] == "true"
 		case "provider":
 			if c.Provider != args[1] && args[1] == "elevenlabs" {
 				c.APIURL, c.APIKeyEnv, c.Model = "", "", ""
 			}
 			c.Provider = args[1]
-			if c.FallbackProvider == c.Provider {
-				c.FallbackProvider = ""
-			}
-		case "fallback_provider":
-			c.FallbackProvider = args[1]
 		case "device_serial":
 			c.Serial = args[1]
 		case "api_url":
@@ -214,12 +249,16 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 		if r.Audio == "" || r.Trashed {
 			return errors.New("transcription requires a downloaded, non-trashed recording")
 		}
-		return s.Update(args[0], func(r *xnote.Record) { r.State = "queued"; r.Error = "" })
-	case "service":
+		return s.Update(args[0], func(r *xnote.Record) {
+			if r.State != "transcribing" {
+				r.State, r.Error = "queued", ""
+			}
+		})
+	case "summarize":
 		if len(args) != 1 {
-			return errors.New("service requires an action")
+			return errors.New("summarize requires ID")
 		}
-		return xnote.Service(s, args[0])
+		return s.QueueSummary(args[0])
 	case "probe-wifi":
 		report, e := xnote.ProbeWiFi(ctx, s)
 		output(report)

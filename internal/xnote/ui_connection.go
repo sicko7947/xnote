@@ -32,19 +32,23 @@ func (d *desktop) updateHeader(c Config, st Status) {
 		mode = d.t("trash_short")
 	}
 	key, color := connectionState(st)
-	processing := d.t("disable")
+	downloads, transcription := d.t("disable"), d.t("disable")
 	if c.Auto {
-		processing = d.t("enable")
+		downloads = d.t("enable")
 	}
-	reconnect := d.t("disable")
-	if st.Phase == "connected" || st.Phase == "downloading" || st.Phase == "searching" || st.Phase == "connecting" || st.Phase == "waiting" {
-		reconnect = d.t("enable")
+	if c.AutoTranscribe {
+		transcription = d.t("enable")
 	}
 	detail := d.t(key)
 	if st.Phase == "downloading" {
 		detail += fmt.Sprintf(" · %d%% · %.1f KiB/s", st.Progress, st.BytesPerSecond/1024)
 	}
-	d.header.SetText(fmt.Sprintf("[#7bd8c4::b]X NOTE[-:-:-]  %s    [%s]%s[-]\n[#a4aebe]%s  ·  %s %s  ·  %s %s  ·  [#7bd8c4]c[-] %s[-]", mode, color, detail, tview.Escape(c.Serial), d.t("reconnect_short"), reconnect, d.t("processing_short"), processing, d.t("connection")))
+	queue := d.s.TranscriptionStatus()
+	summary := fmt.Sprintf(d.t("transcription_counts"), queue.Running, queue.Queued, EffectiveTranscriptionConcurrency(c))
+	if c.TranscriptionPaused {
+		summary = d.t("queue_paused") + " · " + summary
+	}
+	d.header.SetText(fmt.Sprintf("[#7bd8c4::b]X NOTE[-:-:-]  %s    [%s]%s[-]\n[#a4aebe]%s  ·  %s %s  ·  %s %s  ·  [#7bd8c4]c[-] %s[-]\n[#a4aebe]%s[-]", mode, color, detail, tview.Escape(c.Serial), d.t("auto_download"), downloads, d.t("auto_transcribe"), transcription, d.t("connection"), summary))
 }
 
 func (d *desktop) connectionStatus() {
@@ -66,23 +70,54 @@ func (d *desktop) connectionText() string {
 	}
 	fmt.Fprintf(&b, "%s\n\n%s\n", remembered, d.t("reconnect_explain"))
 	if c.Auto {
-		fmt.Fprintf(&b, "%s\n", d.t("auto_processing_on"))
+		fmt.Fprintf(&b, "%s\n", d.t("auto_download_on"))
 	} else {
-		fmt.Fprintf(&b, "%s\n", d.t("auto_processing_off"))
+		fmt.Fprintf(&b, "%s\n", d.t("auto_download_off"))
 	}
-	fmt.Fprintf(&b, "%s: %s", d.t("provider"), tview.Escape(c.Provider))
-	if c.FallbackProvider != "" {
-		fmt.Fprintf(&b, " · %s: %s", d.t("fallback_provider"), tview.Escape(c.FallbackProvider))
+	if c.AutoTranscribe {
+		fmt.Fprintf(&b, "%s\n", d.t("auto_transcribe_on"))
+	} else {
+		fmt.Fprintf(&b, "%s\n", d.t("auto_transcribe_off"))
 	}
-	fmt.Fprintln(&b)
-	if transcription := d.s.TranscriptionStatus(); transcription.Phase == "waiting" || transcription.Phase == "error" {
+	fmt.Fprintf(&b, "%s: %s\n", d.t("provider"), tview.Escape(c.Provider))
+	if c.Provider == "doway" {
+		fmt.Fprintf(&b, "%s\n", d.t("doway_provider_help"))
+	}
+	transcription := d.s.TranscriptionStatus()
+	fmt.Fprintf(&b, "\n%s\n", fmt.Sprintf(d.t("transcription_counts"), transcription.Running, transcription.Queued, EffectiveTranscriptionConcurrency(c)))
+	if c.TranscriptionPaused {
+		fmt.Fprintf(&b, "%s\n", d.t("queue_paused_help"))
+	}
+	for _, task := range transcription.Active {
+		title := task.Title
+		if strings.TrimSpace(title) == "" {
+			title = task.ID
+		}
+		fmt.Fprintf(&b, "• %s · %s · %s", tview.Escape(strings.Join(strings.Fields(title), " ")), tview.Escape(task.Provider), d.t(task.Phase))
+		if task.Progress > 0 {
+			fmt.Fprintf(&b, " · %d%%", min(100, task.Progress))
+		}
+		fmt.Fprintln(&b)
+		if task.Detail != "" {
+			fmt.Fprintf(&b, "  %s\n", tview.Escape(task.Detail))
+		}
+	}
+	if transcription.Detail != "" {
 		fmt.Fprintf(&b, "%s\n", tview.Escape(transcription.Detail))
 	}
-	if ServiceInstalled() {
-		fmt.Fprintf(&b, "%s\n", d.t("background_installed"))
-	} else {
-		fmt.Fprintf(&b, "%s\n", d.t("background_not_installed"))
+	summaries := d.s.SummaryStatus()
+	fmt.Fprintf(&b, "\n%s\n", fmt.Sprintf(d.t("summary_counts"), summaries.Running, summaries.Queued, EffectiveSummaryConcurrency(c)))
+	for _, task := range summaries.Active {
+		title := task.Title
+		if strings.TrimSpace(title) == "" {
+			title = task.ID
+		}
+		fmt.Fprintf(&b, "• %s · %s\n", tview.Escape(strings.Join(strings.Fields(title), " ")), d.t("summary_"+task.Phase))
 	}
+	if summaries.Detail != "" {
+		fmt.Fprintf(&b, "%s\n", tview.Escape(summaries.Detail))
+	}
+	fmt.Fprintf(&b, "%s\n", d.t("foreground_sync"))
 	if stamp, err := time.Parse(time.RFC3339, st.UpdatedAt); err == nil {
 		fmt.Fprintf(&b, "%s  %s\n", d.t("status_updated"), stamp.Local().Format("15:04:05"))
 	}

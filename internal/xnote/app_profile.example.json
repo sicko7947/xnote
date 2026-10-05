@@ -1,3 +1,5 @@
 {
-  "signing_key": ""
+  "signing_key": "",
+  "template_aes_key": "",
+  "template_aes_iv": ""
 }

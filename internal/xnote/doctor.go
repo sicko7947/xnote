@@ -49,29 +49,46 @@ func TranscriptionReady(ctx context.Context, c Config) error {
 			return errors.New("offline transcription needs a whisper.cpp model file")
 		}
 	case "doway":
-		return errors.New("DOWAY transcription is pending authenticated protocol validation")
+		_, err := cloudSigningKey(appProfiles)
+		return err
 	default:
 		return errors.New("unsupported transcription provider")
 	}
 	return nil
 }
 
+// TranscriptionReady also checks the library's DOWAY session. It does not
+// authenticate the session remotely, upload audio, or consume account credits.
+func (s *Store) TranscriptionReady(ctx context.Context, c Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.Provider == "doway" {
+		if _, err := dowayLanguagePreflight(c.Language); err != nil {
+			return errors.New("DOWAY needs an explicit source language; choose Settings > General > Audio language or run xnote config transcription_language CODE (zh, en, ja, ko, fr, es, ru, de, it, vi, ar). Auto is supported by ElevenLabs")
+		}
+	}
+	if err := TranscriptionReady(ctx, c); err != nil {
+		return err
+	}
+	if c.Provider == "doway" {
+		if _, err := s.cloudSession(); err != nil {
+			return err
+		}
+		if !c.DOWAYPublicUpload {
+			return errors.New("DOWAY requires an audio link readable by anyone who has it; enable this explicitly in Settings > Transcription provider before uploading")
+		}
+	}
+	return nil
+}
+
 func Doctor(s *Store) map[string]any {
 	c := effectiveTranscriptionConfig(s.Config())
-	result := map[string]any{"library": s.Root, "provider": c.Provider, "automatic": c.Auto, "sync": s.Status().Phase}
-	readyErr := TranscriptionReady(context.Background(), c)
+	result := map[string]any{"library": s.Root, "provider": c.Provider, "automatic": c.Auto, "automatic_transcription": c.AutoTranscribe, "sync": s.Status().Phase}
+	readyErr := s.TranscriptionReady(context.Background(), c)
 	result["ready"] = readyErr == nil
 	if readyErr != nil {
 		result["reason"] = readyErr.Error()
-	}
-	if c.FallbackProvider != "" {
-		fallback := fallbackConfig(s.Config())
-		err := TranscriptionReady(context.Background(), fallback)
-		result["fallback_provider"] = fallback.Provider
-		result["fallback_ready"] = err == nil
-		if err != nil {
-			result["fallback_reason"] = err.Error()
-		}
 	}
 	switch c.Provider {
 	case "codex":
@@ -92,10 +109,14 @@ func Doctor(s *Store) map[string]any {
 		_, e = os.Stat(c.OfflineModel)
 		result["model_exists"] = e == nil
 	case "doway":
-		result["ready"] = false
-		result["reason"] = "authenticated transcription protocol pending"
+		_, keyErr := cloudSigningKey(appProfiles)
+		_, sessionErr := s.cloudSession()
+		result["doway_signing_key_available"] = keyErr == nil
+		result["doway_session_available"] = sessionErr == nil
+		result["doway_public_upload_allowed"] = c.DOWAYPublicUpload
+		result["readiness_check"] = "local prerequisites only; session validity and account credits are checked during transcription"
 	}
 	result["transcription"] = s.TranscriptionStatus()
-	result["background_installed"] = ServiceInstalled()
+	result["sync_mode"] = "foreground"
 	return result
 }

@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/hajimehoshi/go-mp3"
 )
@@ -29,8 +28,17 @@ type TranscriptResult struct {
 }
 
 func TranscribeRecording(ctx context.Context, c Config, path string) (TranscriptResult, error) {
-	client := &http.Client{Timeout: 20 * time.Minute, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	if c.Provider == "offline" || c.Provider == "doway" {
+	client := newTranscriptionHTTPClient()
+	return transcribeRecordingWithClient(ctx, c, path, client)
+}
+
+func transcribeRecordingWithClient(ctx context.Context, c Config, path string, client *http.Client) (TranscriptResult, error) {
+	if e := ctx.Err(); e != nil {
+		return TranscriptResult{}, e
+	}
+	if c.Provider == "offline" || c.Provider == "doway" || c.Provider == "elevenlabs" {
+		// Scribe accepts the original MP3 and parallelizes long recordings
+		// internally. One request preserves speaker identity across the file.
 		return requestTranscription(ctx, c, path, client)
 	}
 	f, e := os.Open(path)
@@ -38,7 +46,9 @@ func TranscribeRecording(ctx context.Context, c Config, path string) (Transcript
 		return TranscriptResult{}, e
 	}
 	defer f.Close()
-	decoder, e := mp3.NewDecoder(f)
+	// go-mp3 scans frame headers to calculate duration without decoding the
+	// whole recording. Make that scan cancellable as well as the upload.
+	decoder, e := mp3.NewDecoder(contextAudioFile{ctx: ctx, File: f})
 	if e != nil {
 		return requestTranscription(ctx, c, path, client)
 	}
@@ -135,6 +145,19 @@ func TranscribeRecording(ctx context.Context, c Config, path string) (Transcript
 	result.Text = strings.TrimSpace(result.Text)
 	return result, nil
 }
+
+type contextAudioFile struct {
+	ctx context.Context
+	*os.File
+}
+
+func (f contextAudioFile) Read(p []byte) (int, error) {
+	if e := f.ctx.Err(); e != nil {
+		return 0, e
+	}
+	return f.File.Read(p)
+}
+
 func quietCut(pcm []byte, bytesPerSecond int) int {
 	window := max(4, bytesPerSecond/10)
 	window -= window % 4

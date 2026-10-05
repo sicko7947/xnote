@@ -2,8 +2,8 @@
 
 ## Linux setup, 2026-10-05
 
-- Linux build, mpv JSON IPC lifecycle and systemd user service validated. User
-  service is enabled, with watchdog notifications confirmed by systemd.
+- Linux build and mpv JSON IPC lifecycle validated. Sync runs while the TUI or
+  `watch` process stays open, including in a detached tmux session.
 - Codex Dictate and ElevenLabs Scribe v2 each successfully transcribed the same
   short bundled demonstration audio. This is not a long-recording benchmark.
 - Connected to HD5GA00725 and read 104 recording entries. Complete physical
@@ -24,10 +24,9 @@
   separate concurrent workers; no new radio-throughput claim is made.
 - tinygo Bluetooth's Linux connect call does not enforce ConnectionTimeout.
   A separate bounded BlueZ preconnect runs before tinygo's connection call. The
-  installed systemd service restarts when real sync progress stops; standalone
-  TUI/watch sessions do not provide that process-level recovery. The subsequent
-  native calls are not all context-bounded, so this is not a strict whole-call
-  deadline guarantee.
+  subsequent native calls are not all context-bounded, so this is not a strict
+  whole-call deadline guarantee. If a native call hangs, restart the TUI/watch
+  process manually.
 - A manual direct LE connection helped subsequent BlueZ connections, but a
   reliable handoff has not been established. No raw ATT bootstrap or global
   Bluetooth configuration change is installed. Disconnect/resume integrity,
@@ -89,3 +88,25 @@ measurement; an increase in radio throughput is not established. macOS backend
 RequestConnectionParams is unimplemented in tinygo Bluetooth v0.16.0; invoking
 it is not evidence of tuning the radio. Overview/CLI report remaining bytes and
 a download-only ETA while actively transferring.
+
+## macOS foreground run, 2026-10-05
+
+- The TUI runs in an existing tmux pane and has completed multiple real BLE
+  downloads on HD5GA00725. Observed active transfer rates were about 59–63 KB/s.
+  Closing the TUI released the worker; restarting resumed the partial file.
+- A local read-only benchmark found metadata enumeration of 104 records took
+  about 6–7 ms. A 7.78 MB MP3 took about 4.35 s to fully decode/validate and
+  66 ms to read its duration; its radio transfer at 59 KB/s takes about 132 s.
+  Overlapping validation could save roughly 3%, not multiply radio throughput.
+- BLE remains one file request at a time: audio packets have no file or request
+  identifier. No concurrent requests or guessed radio parameters were enabled.
+- The original app also exposes USB support (opcode 19 in the 3085s protocol),
+  but no USB recording volume was mounted on this Mac. Hardware support and
+  import performance remain unverified; this run keeps Bluetooth selected.
+- ElevenLabs uploads now stream the original file within the documented size
+  and duration limits. This avoids expanding MP3 into many WAV uploads and
+  lets Scribe v2 handle long-file parallel processing on the server. This
+  improves the upload path, not the BLE radio speed.
+  Source: https://elevenlabs.io/docs/overview/capabilities/speech-to-text
+- Automatic transcription and cloud transcript import are opt-in. The default
+  foreground workflow only downloads recordings, with no provider fallback.

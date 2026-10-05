@@ -97,7 +97,7 @@ func (d *desktop) recordingState(r Record) string {
 	switch r.State {
 	case "on_device":
 		return d.t("download_short")
-	case "downloaded", "queued":
+	case "queued":
 		return d.t("transcribe_short")
 	case "error", "download_error":
 		return d.t("failed_short")

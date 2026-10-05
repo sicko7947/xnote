@@ -127,35 +127,26 @@ func TestElevenLabsDefaultsAndReadiness(t *testing.T) {
 	}
 }
 
-func TestElevenLabsConfigAndDoctorFallback(t *testing.T) {
+func TestElevenLabsConfigAndDoctor(t *testing.T) {
 	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := s.Config()
-	c.Provider, c.FallbackProvider = "doway", "elevenlabs"
-	if err := s.SaveConfig(c); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("ELEVENLABS_API_KEY", "fixture-secret")
 	result := Doctor(s)
-	if result["ready"] != false || result["fallback_ready"] != true || result["fallback_provider"] != "elevenlabs" {
+	if result["provider"] != "doway" || result["ready"] != false {
 		t.Fatal(result)
 	}
-	c.Provider, c.FallbackProvider = "elevenlabs", ""
+	if _, ok := result["fallback_provider"]; ok {
+		t.Fatal("doctor exposed an automatic fallback", result)
+	}
+	c := s.Config()
+	c.Provider = "elevenlabs"
 	if err := s.SaveConfig(c); err != nil {
 		t.Fatal(err)
 	}
 	result = Doctor(s)
-	if result["api_key_env"] != "ELEVENLABS_API_KEY" || result["api_model"] != "scribe_v2" {
+	if result["api_key_env"] != "ELEVENLABS_API_KEY" || result["api_model"] != "scribe_v2" || result["ready"] != true {
 		t.Fatal(result)
-	}
-	c.FallbackProvider = "elevenlabs"
-	if s.SaveConfig(c) == nil {
-		t.Fatal("accepted identical fallback")
-	}
-	c.FallbackProvider = "unknown"
-	if s.SaveConfig(c) == nil {
-		t.Fatal("accepted unknown fallback")
 	}
 }

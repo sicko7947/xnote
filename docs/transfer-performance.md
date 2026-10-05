@@ -1,5 +1,38 @@
 # Transfer and search investigation
 
+## Linux setup, 2026-10-05
+
+- Linux build, mpv JSON IPC lifecycle and systemd user service validated. User
+  service is enabled, with watchdog notifications confirmed by systemd.
+- Codex Dictate and ElevenLabs Scribe v2 each successfully transcribed the same
+  short bundled demonstration audio. This is not a long-recording benchmark.
+- Connected to HD5GA00725 and read 104 recording entries. Complete physical
+  Linux download acceptance is still blocked: a 1,190-byte transfer produced
+  repeated short audio notifications and exceeded its declared size. A resumed
+  transfer from offset 1,024 emitted the same 166-byte value twice. Initial
+  acknowledgements were also repeated. Only an exact duplicate of the validated
+  acknowledgement is ignored; audio values are never deduplicated heuristically.
+- Both command and audio notifications now use BlueZ AcquireNotify and one
+  ordered socket reader, bypassing godbus's concurrent signal dispatch. The
+  physical repeated audio values also occur through this path, so the underlying
+  cause is unresolved. Overruns discard the untrusted partial file rather than
+  resuming it. No successful Linux throughput claim is made.
+- Fixed a receive-queue overflow hazard: after the first dropped packet the
+  queue now rejects later packets, preserving a contiguous partial-file prefix
+  for byte-offset resume. A regression test covers the previous gap scenario.
+- Keep a single BLE file request at a time. Download and transcription remain
+  separate concurrent workers; no new radio-throughput claim is made.
+- tinygo Bluetooth's Linux connect call does not enforce ConnectionTimeout.
+  A separate bounded BlueZ preconnect runs before tinygo's connection call. The
+  installed systemd service restarts when real sync progress stops; standalone
+  TUI/watch sessions do not provide that process-level recovery. The subsequent
+  native calls are not all context-bounded, so this is not a strict whole-call
+  deadline guarantee.
+- A manual direct LE connection helped subsequent BlueZ connections, but a
+  reliable handoff has not been established. No raw ATT bootstrap or global
+  Bluetooth configuration change is installed. Disconnect/resume integrity,
+  recorder Wi-Fi and overnight operation remain unverified on Linux.
+
 ## Verified, 2026-10-04
 
 - Go native CoreBluetooth connection, owner handshake, directory and real MP3

@@ -1,6 +1,6 @@
 # X NOTE
 
-一个 Mac 原生终端录音库。配对后自动连接、下载、转写；关闭界面后可由后台服务继续工作。
+一个 Linux / macOS 终端录音库。使用设备已有绑定自动连接、下载、转写；关闭界面后可由后台服务继续工作。
 
 ## 使用
 
@@ -14,6 +14,47 @@ scripts/build.sh
 默认目录：`~/Documents/XNote`。无需 Python。已在 Apple Silicon Mac 和 X NOTE
 HD5GA00725 上验证原生蓝牙连接、下载及 Codex Dictate 转写。
 
+### Linux 自动运行
+
+需要运行中的 BlueZ、已开启的蓝牙适配器，以及播放用的 `mpv`。`ffmpeg` 用于可选离线转写。
+
+```sh
+scripts/build.sh
+./dist/xnote config device_serial HD5GA00725  # 改成自己设备的序列号
+./dist/xnote config automatic true
+./dist/xnote config provider codex
+./dist/xnote config fallback_provider elevenlabs  # 可选，需下方的 Key
+./dist/xnote doctor
+./dist/xnote service install
+~/.local/bin/xnote
+```
+
+Linux 使用 `systemd --user` 的 `xnote.service`，登录后启动，关闭 TUI 后继续同步。
+需要手机 DOWAY 释放蓝牙连接，并让录音器处于开机、可广播状态；充电本身不证明设备正在广播。
+`c` 查看连接详情；`xnote status` 输出供 Agent 使用的 JSON。
+
+```sh
+xnote service status
+journalctl --user -u xnote.service -f
+xnote service stop
+xnote service start
+```
+
+设备离开后持续重试，启动时蓝牙未就绪也会等待。Linux 服务有 90 秒 systemd watchdog：
+只在同步状态持续更新时保活，底层 BlueZ 调用卡住会触发重启。该保护属于后台服务；
+直接运行 TUI / `watch` 不具备 systemd 监督。用户服务默认随登录会话运行，电脑睡眠时不能同步。
+
+Key 放在录音库的 `.env`，CLI、TUI 和后台服务都会读取，已导出的环境变量优先：
+
+```sh
+cp .env.example ~/Documents/XNote/.env
+chmod 600 ~/Documents/XNote/.env
+# 在本机编辑 ELEVENLABS_API_KEY，不要把真实 Key 写入仓库或命令历史。
+```
+
+也可用 `XNOTE_ENV_FILE=/absolute/private.env` 指定文件。支持 `KEY=value`、单/双引号和
+`export KEY=value`，值按字面读取，不执行 shell 命令、不展开变量。修改环境文件后重启后台服务。
+
 - **Tab / Shift+Tab** 切换区域和按钮；**/** 搜索正文、标题和说话人；**?** 查看帮助。
 - **n** 列出匹配的时间片段；**g** 输入时间跳转；**[ / ]** 上下片段；**m** 操作；列表里 **q** 退出。
 - 列表和详情显示已下载音频时长，不必先播放；底部始终标明实际播放的录音。
@@ -21,7 +62,7 @@ HD5GA00725 上验证原生蓝牙连接、下载及 Codex Dictate 转写。
 - 设置 → 账号：DOWAY 登录和云端同步；无需登录即可使用本地流程。
 - **Enter / 双击** 查看正文，**Esc** 回录音库，**空格** 播放所选 / 暂停 / 继续；「操作」只放当前录音的重命名、转写、文件夹和删除。
 - 底部 **播放所选**：点击进度条定位，←/→ 跳转 10 秒，空格暂停，+ 切换倍速。
-- 设置 → 高级 → 开机自动同步：安装当前用户的 LaunchAgent，退出界面后继续同步。
+- 设置 → 高级 → 开机自动同步：安装当前用户的 systemd 服务（Linux）或 LaunchAgent（macOS），退出界面后继续同步。
 - 本地回收站可以恢复；删除设备原件需要输入 `DELETE`，不会删除本地副本。
 - 自动模式包含设备中已有录音。断线自动重连、部分文件续传；不自动删除设备文件。
 - 真正的转写失败不会无限重试消耗额度；菜单里可重试。空转写单独标为“未识别到语音”。
@@ -30,10 +71,14 @@ HD5GA00725 上验证原生蓝牙连接、下载及 Codex Dictate 转写。
 
 - **codex**：调用已有的 Codex Dictate 本机代理 `127.0.0.1:8377`。代理独立管理登录，
   xnote 不读取 Codex 凭据。实际音频会由代理发送到它配置的服务。
+- **elevenlabs**：使用 ElevenLabs Scribe v2，默认读取 `ELEVENLABS_API_KEY`，返回说话人及真实时间片段。
+  用 `xnote config provider elevenlabs` 或常规设置选择；Key 可放入上面的私有 `.env`。
+  `fallback_provider` 只在主服务的本地预检不可用时选备用，例如 Codex 代理未启动。
+  预检不验证远端登录或额度；已提交请求的鉴权、额度或网络失败仍显示错误，修复后手动重试，避免反复收费。
 - **api**：配置 HTTPS multipart 转写地址、模型和 API Key 环境变量名。
   支持纯文字及 `segments`（start/end/speaker/text）。设置内可选择 `whisper-1` 时间戳或
-  `gpt-4o-transcribe-diarize` 说话人预设。后台 LaunchAgent 的环境与交互 shell 不同，
-  需确保该环境变量对后台进程可用；`doctor` 检查当前进程的配置。
+  `gpt-4o-transcribe-diarize` 说话人预设。后台环境与交互 shell 不同，推荐使用录音库 `.env`；
+  `doctor` 检查当前进程的配置，缺少服务或 Key 时保留待处理队列，稍后自动检查。
 - **offline**：调用本地 `whisper-cli`（whisper.cpp）、模型文件和 `ffmpeg`。
   这些可选模型/工具不包含在 binary 中。Go 版这一模式尚未做真实模型验收。
 - **DOWAY**：邮箱登录及云端列表已有实现，云端已有标题和结构化转写的读取/导入已实现，真实账号登录仍未通过验收。
@@ -44,7 +89,7 @@ HD5GA00725 上验证原生蓝牙连接、下载及 Codex Dictate 转写。
 长录音自动分段，优先在较安静处切分；已成功片段缓存，失败后重试可继续。
 Codex 当前只返回文字：长录音的 `≈` 是分段起点，并非逐句时间戳，不会伪造说话人。
 支持说话人的 API 片段显示时间与标签；跨请求的说话人标签保持独立，避免错误合并。
-点击转写里的时间点可直接播放对应位置。API 说话人模式已做请求/解析测试，尚未用真实 API Key 验收。
+点击转写里的时间点可直接播放对应位置。OpenAI 兼容 API 的说话人模式已做请求/解析测试，尚未用真实 API Key 验收。
 
 界面使用 [tview](https://github.com/rivo/tview) 表格、表单、下拉框和鼠标事件。
 主界面是一张录音表：录制时间、标题 / 摘录、时长、处理状态。
@@ -90,7 +135,7 @@ Codex 当前只返回文字：长录音的 `≈` 是分段起点，并非逐句�
 - Codex：转写方式页面会检查本机代理连接；当前返回文字，不能提供真正的说话人识别。
 - 自带 API / 离线：需要配置服务与 Key，或本地模型及依赖；真实可用性需要实际转写验证。
 - DOWAY：需有效登录会话才能读取云端数据；新的云端转写提交仍未完成认证协议验收。
-- 开机后台同步：需要安装用户级 LaunchAgent。安装状态和当前蓝牙连接是不同的状态。
+- 开机后台同步：需要安装用户级 systemd 服务或 LaunchAgent。安装状态和当前蓝牙连接是不同的状态。
 
 ## AI / CLI
 
@@ -105,6 +150,7 @@ xnote show HD5GA00725-20260709220314 --json
 xnote status
 xnote doctor
 xnote transcribe RECORDING_ID
+xnote download RECORDING_ID
 xnote --data /absolute/library watch
 xnote service install
 xnote service status
@@ -117,6 +163,7 @@ xnote service stop
 ```text
 ~/Documents/XNote/
   config.json
+  .env                   # 可选私有 Key，0600 权限；不会显示在 config/doctor 中
   recordings/2026/09/HD5GA00725-20260929104048/
     audio.mp3
     transcript.md
@@ -133,7 +180,7 @@ xnote service stop
 
 ## 构建与检查
 
-需要 Go 1.27.1 或更新版本、Xcode Command Line Tools；蓝牙和播放器链接 macOS 系统框架。
+需要 Go 1.27.1 或更新版本。Linux 使用 BlueZ 和外部 `mpv`；macOS 需要 Xcode Command Line Tools，蓝牙和播放器链接系统框架。
 
 ```sh
 scripts/build.sh
@@ -142,7 +189,11 @@ go vet ./...
 ```
 
 产物：`dist/xnote`、`dist/xnote.sha256`。本机 ad-hoc 签名，尚未做 Developer ID
-签名/Apple 公证；对外发布前仍需完成这些发布步骤。当前只验收 macOS arm64。
+签名/Apple 公证；对外发布前仍需完成这些发布步骤。Linux 不运行 codesign。
+Linux 已验证构建、mpv 生命周期、systemd 用户服务和 Codex / ElevenLabs 真实示例音频转写；
+已连接 HD5GA00725 并读取 104 条录音目录，但实体传输出现重复尾包，完整下载尚未通过验收。
+Linux 命令和音频通知使用 BlueZ `AcquireNotify` 保持接收顺序；这并未消除实机重复包。
+遇到超出预期大小的数据会丢弃不可信的本地片段；设备原录音不受影响。Wi-Fi 仍待验收。
 
 实现拆分：`device.go` 设备协议、`engine.go` 同步队列、`store.go` 文件存储、
 `transcribe.go` 转写、`ui.go` 界面、`player_darwin.*` 本机播放器。
@@ -167,7 +218,7 @@ scripts/build.sh
 ```text
 cmd/xnote/       CLI 入口
 internal/xnote/  设备、同步、转写、存储、TUI 和 Go 测试
-scripts/        macOS 构建脚本及蓝牙权限说明
+scripts/        Linux / macOS 构建脚本及蓝牙权限说明
 docs/          传输调查和已知限制
 ```
 

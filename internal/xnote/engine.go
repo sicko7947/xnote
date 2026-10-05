@@ -35,11 +35,14 @@ func wait(ctx context.Context, d time.Duration) bool {
 	}
 }
 func Run(ctx context.Context, s *Store) error {
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	owner, e := s.Owner()
 	if e != nil {
 		return e
 	}
 	defer owner.Close()
+	go runServiceWatchdog(ctx, s)
 	defer s.SetStatus(Status{Phase: "stopped", Battery: -1})
 	rows, e := s.Records()
 	if e != nil {
@@ -47,7 +50,7 @@ func Run(ctx context.Context, s *Store) error {
 	}
 	for _, r := range rows {
 		if r.State == "transcribing" {
-			_ = s.Update(r.ID, func(r *Record) { r.State = "error"; r.Error = "transcription interrupted; retry from menu" })
+			_ = s.Update(r.ID, func(r *Record) { r.State = "queued"; r.Error = "" })
 		}
 	}
 	transCtx, stop := context.WithCancel(ctx)
@@ -69,16 +72,30 @@ func Run(ctx context.Context, s *Store) error {
 	}()
 	defer func() { stop(); <-cloudDone }()
 	adapter := bluetooth.DefaultAdapter
-	if e = adapter.Enable(); e != nil {
-		return e
-	}
+	adapterReady := false
 	for ctx.Err() == nil {
+		// BlueZ or the adapter may not be ready yet at login or after resume.
+		if !adapterReady {
+			e = adapter.Enable()
+		}
+		if e != nil {
+			s.SetStatus(Status{Phase: "waiting", Battery: -1, Detail: "Bluetooth unavailable: " + e.Error()})
+			if !wait(ctx, 10*time.Second) {
+				break
+			}
+			continue
+		}
+		adapterReady = true
 		c := s.Config()
 		s.SetStatus(Status{Phase: "searching", Battery: -1})
-		scanCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		device, err := Connect(scanCtx, adapter, c)
-		cancel()
+		device, err := Connect(ctx, adapter, c, func(detail string) {
+			s.SetStatus(Status{Phase: "connecting", Battery: -1, Detail: detail})
+		})
 		if err != nil {
+			adapterReady = false
+			if errors.Is(err, context.DeadlineExceeded) && s.Status().Phase == "searching" {
+				err = fmt.Errorf("Xnote %s not found; keep it awake nearby and disconnect DOWAY on the phone", c.Serial)
+			}
 			s.SetStatus(Status{Phase: "waiting", Battery: -1, Detail: err.Error()})
 			if !wait(ctx, 5*time.Second) {
 				break
@@ -224,13 +241,27 @@ func transcriptionLoop(ctx context.Context, s *Store) {
 				if r.Trashed || r.Audio == "" || !(r.State == "queued" || s.Config().Auto && r.State == "downloaded") {
 					continue
 				}
+				config, readyErr := selectTranscriptionProvider(ctx, s.Config(), TranscriptionReady)
+				if readyErr != nil {
+					s.setTranscriptionStatus("waiting", config.Provider, r.ID, readyErr.Error())
+					if !wait(ctx, 15*time.Second) {
+						return
+					}
+					break
+				}
 				if e := s.Update(r.ID, func(r *Record) { r.State = "transcribing"; r.Error = "" }); e != nil {
 					continue
 				}
-				config := s.Config()
+				s.setTranscriptionStatus("transcribing", config.Provider, r.ID, "")
 				result, err := TranscribeRecording(ctx, config, r.Audio)
 				if err != nil {
+					if ctx.Err() != nil {
+						_ = s.Update(r.ID, func(r *Record) { r.State = "queued"; r.Error = "" })
+						s.setTranscriptionStatus("stopped", config.Provider, r.ID, "")
+						return
+					}
 					_ = s.Update(r.ID, func(r *Record) { r.State = "error"; r.Error = err.Error() })
+					s.setTranscriptionStatus("error", config.Provider, r.ID, err.Error())
 				} else {
 					provider := config.Provider
 					_ = s.Update(r.ID, func(r *Record) {
@@ -243,6 +274,7 @@ func transcriptionLoop(ctx context.Context, s *Store) {
 						}
 						r.Error = ""
 					})
+					s.setTranscriptionStatus("ready", config.Provider, "", "")
 				}
 				break
 			}
@@ -251,4 +283,51 @@ func transcriptionLoop(ctx context.Context, s *Store) {
 			return
 		}
 	}
+}
+
+// Fallback is selected before submitting audio. Never retry a failed paid
+// request with another provider automatically.
+func selectTranscriptionProvider(ctx context.Context, c Config, ready func(context.Context, Config) error) (Config, error) {
+	err := ready(ctx, c)
+	if err == nil || ctx.Err() != nil || c.FallbackProvider == "" {
+		return c, err
+	}
+	fallback := fallbackConfig(c)
+	if fallbackErr := ready(ctx, fallback); fallbackErr != nil {
+		return c, fmt.Errorf("%s: %v; fallback %s: %v", c.Provider, err, fallback.Provider, fallbackErr)
+	}
+	return fallback, nil
+}
+
+func fallbackConfig(c Config) Config {
+	fallback := c
+	fallback.Provider = c.FallbackProvider
+	// API fields belong to the primary provider. Built-in providers have their
+	// own defaults, so do not forward an unrelated endpoint or model.
+	if fallback.Provider == "elevenlabs" || fallback.Provider == "codex" {
+		fallback.APIURL, fallback.Model, fallback.APIKeyEnv = "", "", ""
+	}
+	return fallback
+}
+
+type TranscriptionStatus struct {
+	Phase     string `json:"phase"`
+	Provider  string `json:"provider,omitempty"`
+	Current   string `json:"current,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
+func (s *Store) setTranscriptionStatus(phase, provider, current, detail string) {
+	_ = atomicJSON(s.path(".work/transcription-status.json"), TranscriptionStatus{phase, provider, current, detail, time.Now().UTC().Format(time.RFC3339)})
+}
+
+func (s *Store) TranscriptionStatus() (st TranscriptionStatus) {
+	if readJSON(s.path(".work/transcription-status.json"), &st) != nil {
+		st.Phase = "idle"
+	}
+	if s.Status().Phase == "stopped" {
+		st.Phase = "stopped"
+	}
+	return
 }

@@ -45,11 +45,12 @@ xnote [--data FOLDER] show ID --json
 xnote [--data FOLDER] status
 xnote [--data FOLDER] config [KEY VALUE]
 xnote [--data FOLDER] transcribe ID   Queue transcription (watch/TUI must run)
+xnote [--data FOLDER] download ID     Queue recording download
 xnote [--data FOLDER] service install|start|stop|status
 xnote [--data FOLDER] cloud list|show UID|import LOCAL_ID CLOUD_UID
 xnote [--data FOLDER] doctor
 
-No Python runtime required. macOS arm64 binary; local offline models are optional.
+Linux (BlueZ + mpv) and macOS supported; local offline models are optional.
 Search stdout is JSON with --json; errors go to stderr. Audio and Markdown are
 under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 	}
@@ -61,6 +62,9 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 	}
 	s, e := xnote.Open(root)
 	if e != nil {
+		return e
+	}
+	if e = xnote.LoadEnvironment(s.Root); e != nil {
 		return e
 	}
 	args := flags.Args()
@@ -150,7 +154,7 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 		if e != nil {
 			return e
 		}
-		output(map[string]any{"library": s.Root, "sync": s.Status(), "automatic": s.Config().Auto, "recordings": len(hits), "overview": overview})
+		output(map[string]any{"library": s.Root, "sync": s.Status(), "transcription": s.TranscriptionStatus(), "automatic": s.Config().Auto, "recordings": len(hits), "overview": overview})
 	case "config":
 		c := s.Config()
 		if len(args) == 0 {
@@ -169,7 +173,15 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 			}
 			c.Auto = args[1] == "true"
 		case "provider":
+			if c.Provider != args[1] && args[1] == "elevenlabs" {
+				c.APIURL, c.APIKeyEnv, c.Model = "", "", ""
+			}
 			c.Provider = args[1]
+			if c.FallbackProvider == c.Provider {
+				c.FallbackProvider = ""
+			}
+		case "fallback_provider":
+			c.FallbackProvider = args[1]
 		case "device_serial":
 			c.Serial = args[1]
 		case "api_url":
@@ -186,16 +198,23 @@ under recordings/YYYY/MM/DEVICE-FILENAME/. Credentials are never printed.`)
 			return errors.New("unknown setting")
 		}
 		return s.SaveConfig(c)
+	case "download":
+		if len(args) != 1 {
+			return errors.New("download requires ID")
+		}
+		return s.Queue("download", args[0])
 	case "transcribe":
 		if len(args) != 1 {
 			return errors.New("transcribe requires ID")
 		}
-		return s.Update(args[0], func(r *xnote.Record) {
-			if r.Audio != "" && !r.Trashed {
-				r.State = "queued"
-				r.Error = ""
-			}
-		})
+		r, e := s.Get(args[0])
+		if e != nil {
+			return e
+		}
+		if r.Audio == "" || r.Trashed {
+			return errors.New("transcription requires a downloaded, non-trashed recording")
+		}
+		return s.Update(args[0], func(r *xnote.Record) { r.State = "queued"; r.Error = "" })
 	case "service":
 		if len(args) != 1 {
 			return errors.New("service requires an action")

@@ -13,16 +13,17 @@ import (
 )
 
 type Config struct {
-	Locale       string `json:"locale"`
-	Serial       string `json:"device_serial"`
-	DeviceID     string `json:"device_id"`
-	Auto         bool   `json:"automatic"`
-	Provider     string `json:"provider"`
-	Language     string `json:"transcription_language"`
-	APIURL       string `json:"api_url"`
-	APIKeyEnv    string `json:"api_key_env"`
-	Model        string `json:"api_model"`
-	OfflineModel string `json:"offline_model"`
+	Locale           string `json:"locale"`
+	Serial           string `json:"device_serial"`
+	DeviceID         string `json:"device_id"`
+	Auto             bool   `json:"automatic"`
+	Provider         string `json:"provider"`
+	FallbackProvider string `json:"fallback_provider,omitempty"`
+	Language         string `json:"transcription_language"`
+	APIURL           string `json:"api_url"`
+	APIKeyEnv        string `json:"api_key_env"`
+	Model            string `json:"api_model"`
+	OfflineModel     string `json:"offline_model"`
 }
 type Record struct {
 	TitleSource     string    `json:"title_source,omitempty"`
@@ -118,9 +119,17 @@ func (s *Store) SaveConfig(c Config) error {
 		return errors.New("unsupported UI language")
 	}
 	switch c.Provider {
-	case "codex", "api", "offline", "doway":
+	case "codex", "api", "offline", "doway", "elevenlabs":
 	default:
 		return errors.New("unsupported provider")
+	}
+	switch c.FallbackProvider {
+	case "", "codex", "api", "offline", "elevenlabs":
+	default:
+		return errors.New("unsupported fallback provider")
+	}
+	if c.FallbackProvider != "" && c.FallbackProvider == c.Provider {
+		return errors.New("fallback provider must differ from primary provider")
 	}
 	if !safePart(c.Serial) {
 		return errors.New("invalid device serial")

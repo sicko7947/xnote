@@ -251,3 +251,22 @@ func TestAutomaticCheckboxKeyboardMouseAndCancel(t *testing.T) {
 		t.Fatal("Ctrl+S did not persist the checkbox")
 	}
 }
+
+func TestGeneralSettingsPreservesCLIFallback(t *testing.T) {
+	for _, fallback := range []string{"", "elevenlabs", "api", "offline"} {
+		t.Run(fallback, func(t *testing.T) {
+			d, press := keyboardUI(t)
+			c := d.s.Config()
+			c.FallbackProvider = fallback
+			if err := d.s.SaveConfig(c); err != nil {
+				t.Fatal(err)
+			}
+			press(tcell.KeyRune, 's')
+			press(tcell.KeyRune, '1')
+			press(tcell.KeyCtrlS, 0)
+			if got := d.s.Config().FallbackProvider; got != fallback {
+				t.Fatalf("fallback changed from %q to %q", fallback, got)
+			}
+		})
+	}
+}

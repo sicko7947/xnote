@@ -26,12 +26,42 @@ type reply struct {
 	data []byte
 }
 type Device struct {
+	adapter      *bluetooth.Adapter
 	device       bluetooth.Device
 	write, audio bluetooth.DeviceCharacteristic
+	notify       bluetooth.DeviceCharacteristic
+	stopNotify   func()
 	replies      chan reply
 	fail         chan error
 	buffer       []byte
 	mu           sync.Mutex
+}
+
+// audioQueue stops accepting bytes after the first dropped packet. A partial
+// download must remain a contiguous prefix, otherwise byte-offset resume would
+// silently retain a hole in the recording.
+type audioQueue struct {
+	mu      sync.Mutex
+	packets chan []byte
+	fail    chan error
+	failed  bool
+}
+
+func (q *audioQueue) receive(p []byte) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.failed {
+		return
+	}
+	select {
+	case q.packets <- append([]byte(nil), p...):
+	default:
+		q.failed = true
+		select {
+		case q.fail <- errors.New("audio buffer overflow; will resume on reconnect"):
+		default:
+		}
+	}
 }
 
 func crc16(b []byte) uint16 {
@@ -121,7 +151,19 @@ func matches(result bluetooth.ScanResult, c Config) bool {
 	return !conflict && c.DeviceID != "" && stringsEqual(result.Address.String(), c.DeviceID)
 }
 func stringsEqual(a, b string) bool { return bytes.EqualFold([]byte(a), []byte(b)) }
-func Connect(ctx context.Context, a *bluetooth.Adapter, c Config) (*Device, error) {
+func Connect(ctx context.Context, a *bluetooth.Adapter, c Config, progress ...func(string)) (*Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	report := func(stage string) {
+		for _, update := range progress {
+			if update != nil {
+				update(stage)
+			}
+		}
+	}
+	scanCtx, stopScan := context.WithTimeout(ctx, 15*time.Second)
+	defer stopScan()
 	found := make(chan bluetooth.ScanResult, 1)
 	done := make(chan error, 1)
 	go func() {
@@ -137,26 +179,42 @@ func Connect(ctx context.Context, a *bluetooth.Adapter, c Config) (*Device, erro
 	var result bluetooth.ScanResult
 	select {
 	case result = <-found:
+		report("recorder found; stopping discovery")
 		_ = a.StopScan()
 		<-done
 	case err := <-done:
+		if err == nil {
+			err = errors.New("Bluetooth scan stopped before finding the recorder")
+		}
 		return nil, err
-	case <-ctx.Done():
+	case <-scanCtx.Done():
 		_ = a.StopScan()
 		<-done
-		return nil, ctx.Err()
+		return nil, fmt.Errorf("Bluetooth discovery: %w", scanCtx.Err())
+	}
+	stopScan()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	connectionCtx, stopConnection := context.WithTimeout(ctx, 30*time.Second)
+	defer stopConnection()
+	ctx = connectionCtx
+	report("establishing Bluetooth link")
+	if err := preconnect(ctx, a, result.Address); err != nil {
+		return nil, err
 	}
 	dev, e := a.Connect(result.Address, bluetooth.ConnectionParams{ConnectionTimeout: bluetooth.NewDuration(12 * time.Second)})
 	if e != nil {
 		return nil, e
 	}
-	d := &Device{device: dev, replies: make(chan reply, 4096), fail: make(chan error, 1)}
+	d := &Device{adapter: a, device: dev, replies: make(chan reply, 4096), fail: make(chan error, 1)}
 	success := false
 	defer func() {
 		if !success {
-			_ = dev.Disconnect()
+			d.Close()
 		}
 	}()
+	report("discovering recorder services")
 	services, e := dev.DiscoverServices([]bluetooth.UUID{bluetooth.New16BitUUID(0xb0b0)})
 	if e != nil {
 		return nil, e
@@ -182,9 +240,12 @@ func Connect(ctx context.Context, a *bluetooth.Adapter, c Config) (*Device, erro
 	if !ok {
 		return nil, errors.New("missing notification characteristic")
 	}
-	if e = notify.EnableNotifications(d.receive); e != nil {
+	d.notify = notify
+	d.stopNotify, e = subscribeCommands(ctx, d, d.receive, d.fail)
+	if e != nil {
 		return nil, e
 	}
+	report("authenticating recorder session")
 	owner, e := d.request(ctx, 2, nil)
 	if e != nil {
 		return nil, e
@@ -203,7 +264,13 @@ func Connect(ctx context.Context, a *bluetooth.Adapter, c Config) (*Device, erro
 	success = true
 	return d, nil
 }
-func (d *Device) Close() { _ = d.device.Disconnect() }
+func (d *Device) Close() {
+	if d.stopNotify != nil {
+		d.stopNotify()
+		d.stopNotify = nil
+	}
+	_ = d.device.Disconnect()
+}
 func (d *Device) List(ctx context.Context) ([]DeviceFile, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -260,19 +327,13 @@ func (d *Device) Download(ctx context.Context, r Record, path string, progress f
 	defer writer.Flush() // Preserve the contiguous received prefix for resume on cancellation.
 	packets := make(chan []byte, 4096)
 	fail := make(chan error, 1)
-	if e = d.audio.EnableNotifications(func(p []byte) {
-		select {
-		case packets <- append([]byte(nil), p...):
-		default:
-			select {
-			case fail <- errors.New("audio buffer overflow"):
-			default:
-			}
-		}
-	}); e != nil {
+	queue := &audioQueue{packets: packets, fail: fail}
+	stopAudio, finishAudio, e := subscribeAudio(ctx, d, queue.receive, fail)
+	if e != nil {
 		return e
 	}
-	defer func() { _ = d.send(12, nil); _ = d.audio.EnableNotifications(nil) }()
+	defer stopAudio()
+	defer func() { _ = d.send(12, nil) }()
 	payload := binary.BigEndian.AppendUint32([]byte(r.DeviceName), uint32(offset))
 	ack, e := d.request(ctx, 11, payload)
 	if e != nil {
@@ -297,7 +358,12 @@ func (d *Device) Download(ctx context.Context, r Record, path string, progress f
 			return e
 		case p := <-packets:
 			if received+int64(len(p)) > r.Size {
-				return errors.New("audio exceeds expected size")
+				// An overrun can mean earlier packets were repeated. That prefix
+				// cannot safely be used as a byte offset on the next connection.
+				if err := discardDownloadPrefix(f, writer); err != nil {
+					return fmt.Errorf("audio exceeds expected size; discard partial: %w", err)
+				}
+				return errors.New("audio exceeds expected size; partial discarded")
 			}
 			if _, e = writer.Write(p); e != nil {
 				return e
@@ -307,18 +373,56 @@ func (d *Device) Download(ctx context.Context, r Record, path string, progress f
 			idle.Reset(20 * time.Second)
 		case r := <-d.replies:
 			if r.op == 11 {
-				if !bytes.Equal(r.data, []byte{2}) {
-					return errors.New("transfer failed")
+				finished, err := downloadReplyComplete(r.data, ack)
+				if err != nil {
+					return err
 				}
-				complete = true
+				complete = complete || finished
 			}
 		}
+	}
+	// Completion and audio arrive through separate characteristics. Stop the
+	// producer and drain its socket before accepting the final byte count.
+	if e = finishAudio(ctx); e != nil {
+		return e
+	}
+	select {
+	case <-packets:
+		if err := discardDownloadPrefix(f, writer); err != nil {
+			return fmt.Errorf("audio exceeds expected size after completion; discard partial: %w", err)
+		}
+		return errors.New("audio exceeds expected size after completion; partial discarded")
+	default:
+	}
+	select {
+	case e = <-fail:
+		return e
+	default:
 	}
 	if e = writer.Flush(); e != nil {
 		return e
 	}
 	return f.Sync()
 }
+
+func discardDownloadPrefix(f *os.File, writer *bufio.Writer) error {
+	writer.Reset(io.Discard)
+	return f.Truncate(0)
+}
+
+func downloadReplyComplete(data, initialAck []byte) (bool, error) {
+	if bytes.Equal(data, []byte{2}) {
+		return true, nil
+	}
+	// The recorder can repeat its accepted request acknowledgement while audio
+	// is flowing. Only that exact, already-validated file-size ACK is harmless.
+	// It neither marks completion nor extends the audio stall deadline.
+	if len(initialAck) == 5 && initialAck[0] == 0 && bytes.Equal(data, initialAck) {
+		return false, nil
+	}
+	return false, fmt.Errorf("transfer failed: device status %x", data)
+}
+
 func (d *Device) Delete(ctx context.Context, name string) error {
 	if !validName(name) {
 		return errors.New("invalid filename")

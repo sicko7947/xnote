@@ -1,6 +1,7 @@
 package xnote
 
 var words = map[string][3]string{
+	"fallback_provider":         {"不可用时备用", "Fallback when unavailable", "利用不可時の代替"},
 	"keys_readonly":             {"[↑↓] 滚动    [Esc] 返回", "[↑↓] Scroll    [Esc] Back", "[↑↓] スクロール    [Esc] 戻る"},
 	"no_selection":              {"选择一条录音后可播放。", "Select a recording to play.", "録音を選択すると再生できます。"},
 	"open_short":                {"查看", "Open", "開く"},
@@ -22,6 +23,7 @@ var words = map[string][3]string{
 	"connection":                {"连接详情", "Connection", "接続状態"},
 	"link_connected":            {"设备已连接", "Device connected", "本体に接続済み"},
 	"link_searching":            {"未连接 · 搜索中", "Disconnected · Searching", "未接続・検索中"},
+	"link_connecting":           {"已发现 · 连接中", "Device found · Connecting", "本体検出・接続中"},
 	"link_waiting":              {"未连接 · 等待重连", "Disconnected · Retrying", "未接続・再接続待ち"},
 	"link_stopped":              {"未连接 · 同步未运行", "Disconnected · Sync stopped", "未接続・同期停止"},
 	"reconnect_short":           {"自动重连", "Reconnect", "自動再接続"},

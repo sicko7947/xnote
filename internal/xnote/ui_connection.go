@@ -2,8 +2,6 @@ package xnote
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +14,8 @@ func connectionState(st Status) (key, color string) {
 		return "link_connected", "#7bd8c4"
 	case "searching":
 		return "link_searching", "#efb879"
+	case "connecting":
+		return "link_connecting", "#efb879"
 	case "waiting":
 		return "link_waiting", "#efb879"
 	default:
@@ -37,7 +37,7 @@ func (d *desktop) updateHeader(c Config, st Status) {
 		processing = d.t("enable")
 	}
 	reconnect := d.t("disable")
-	if st.Phase == "connected" || st.Phase == "downloading" || st.Phase == "searching" || st.Phase == "waiting" {
+	if st.Phase == "connected" || st.Phase == "downloading" || st.Phase == "searching" || st.Phase == "connecting" || st.Phase == "waiting" {
 		reconnect = d.t("enable")
 	}
 	detail := d.t(key)
@@ -70,8 +70,15 @@ func (d *desktop) connectionText() string {
 	} else {
 		fmt.Fprintf(&b, "%s\n", d.t("auto_processing_off"))
 	}
-	home, _ := os.UserHomeDir()
-	if _, err := os.Stat(filepath.Join(home, "Library/LaunchAgents/ai.xnote.sync.plist")); err == nil {
+	fmt.Fprintf(&b, "%s: %s", d.t("provider"), tview.Escape(c.Provider))
+	if c.FallbackProvider != "" {
+		fmt.Fprintf(&b, " · %s: %s", d.t("fallback_provider"), tview.Escape(c.FallbackProvider))
+	}
+	fmt.Fprintln(&b)
+	if transcription := d.s.TranscriptionStatus(); transcription.Phase == "waiting" || transcription.Phase == "error" {
+		fmt.Fprintf(&b, "%s\n", tview.Escape(transcription.Detail))
+	}
+	if ServiceInstalled() {
 		fmt.Fprintf(&b, "%s\n", d.t("background_installed"))
 	} else {
 		fmt.Fprintf(&b, "%s\n", d.t("background_not_installed"))

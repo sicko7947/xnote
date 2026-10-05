@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -468,7 +469,13 @@ func (d *desktop) recordActions() []recordAction {
 					}
 				}))
 			})
-			add("folder", func() { d.message(exec.Command("open", d.s.Dir(r)).Start()) })
+			add("folder", func() {
+				command := "open"
+				if runtime.GOOS == "linux" {
+					command = "xdg-open"
+				}
+				d.async(func() error { return exec.CommandContext(d.ctx, command, d.s.Dir(r)).Run() })
+			})
 			add("trash", func() { d.confirmTrash(r) })
 		} else if r.Trashed {
 			add("restore", func() { d.message(d.s.Update(r.ID, func(r *Record) { r.Trashed = false })); d.refresh() })
@@ -519,14 +526,27 @@ func (d *desktop) generalSettings() {
 		return 0
 	}
 	locales := []string{"zh-CN", "en", "ja"}
-	providers := []string{"codex", "api", "offline"}
+	providers := []string{"codex", "elevenlabs", "api", "offline"}
+	fallbacks := []string{"", "codex", "elevenlabs", "api", "offline"}
 	languages := []string{"", "zh", "en", "ja"}
 	form.AddDropDown(d.t("locale"), []string{"简体中文", "English", "日本語"}, index(c.Locale, locales), func(_ string, i int) { c.Locale = locales[i] })
-	form.AddDropDown(d.t("provider"), []string{"Codex Dictate · Text", "API · timestamps / speakers", "Offline · whisper.cpp"}, index(c.Provider, providers), func(_ string, i int) { c.Provider = providers[i] })
+	form.AddDropDown(d.t("provider"), []string{"Codex Dictate · Text", "ElevenLabs · Scribe / speakers", "API · timestamps / speakers", "Offline · whisper.cpp"}, index(c.Provider, providers), func(_ string, i int) {
+		if c.Provider != providers[i] && providers[i] == "elevenlabs" {
+			c.APIURL, c.APIKeyEnv, c.Model = "", "", ""
+		}
+		c.Provider = providers[i]
+		if c.FallbackProvider == c.Provider {
+			c.FallbackProvider = ""
+		}
+	})
 	form.AddDropDown(d.t("spoken"), []string{"Auto", "中文", "English", "日本語"}, index(c.Language, languages), func(_ string, i int) { c.Language = languages[i] })
 	form.AddFormItem(newOptionCheckbox(d.t("auto"), c.Auto, func(v bool) { c.Auto = v }))
+	form.AddDropDown(d.t("fallback_provider"), []string{d.t("disable"), "Codex Dictate", "ElevenLabs", "API", "Offline"}, index(c.FallbackProvider, fallbacks), func(_ string, i int) { c.FallbackProvider = fallbacks[i] })
 	form.AddButton(d.t("save"), func() {
-		d.message(d.s.SaveConfig(c))
+		if err := d.s.SaveConfig(c); err != nil {
+			d.message(err)
+			return
+		}
 		d.closeModal()
 		d.makeActions()
 
@@ -534,17 +554,20 @@ func (d *desktop) generalSettings() {
 	})
 	form.AddButton(d.t("back"), d.closeModal)
 	form.SetCancelFunc(d.closeModal)
-	d.popup(form, 76, 15)
+	d.popup(form, 76, 17)
 }
 func (d *desktop) providerSettings() {
-	c := d.s.Config()
+	c := effectiveTranscriptionConfig(d.s.Config())
 	if c.Provider == "codex" {
 		d.providerStatus()
 		return
 	}
 	form := tview.NewForm()
 	form.SetBorder(true).SetTitle(d.t("provider"))
-	if c.Provider == "api" {
+	if c.Provider == "elevenlabs" {
+		form.AddInputField(d.t("api_key_env"), c.APIKeyEnv, 30, nil, func(v string) { c.APIKeyEnv = v })
+		form.AddInputField(d.t("api_model"), c.Model, 40, nil, func(v string) { c.Model = v })
+	} else if c.Provider == "api" {
 		form.AddInputField(d.t("api_url"), c.APIURL, 50, nil, func(v string) { c.APIURL = v }).AddInputField(d.t("api_key_env"), c.APIKeyEnv, 30, nil, func(v string) { c.APIKeyEnv = v }).AddInputField(d.t("api_model"), c.Model, 40, nil, func(v string) { c.Model = v })
 		form.AddDropDown(d.t("capabilities"), []string{"whisper-1 · timestamps", "gpt-4o-transcribe-diarize · speakers", "Custom model"}, 2, func(_ string, i int) {
 			if i < 2 {
@@ -555,7 +578,13 @@ func (d *desktop) providerSettings() {
 	} else {
 		form.AddInputField(d.t("offline_model"), c.OfflineModel, 50, nil, func(v string) { c.OfflineModel = v })
 	}
-	form.AddButton(d.t("save"), func() { d.message(d.s.SaveConfig(c)); d.closeModal() }).AddButton(d.t("back"), d.closeModal)
+	form.AddButton(d.t("save"), func() {
+		if err := d.s.SaveConfig(c); err != nil {
+			d.message(err)
+			return
+		}
+		d.closeModal()
+	}).AddButton(d.t("back"), d.closeModal)
 	form.SetCancelFunc(d.closeModal)
 	d.popup(form, 88, 16)
 }

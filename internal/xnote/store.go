@@ -384,25 +384,33 @@ type Hit struct {
 
 func (s *Store) Search(query string, trash bool) ([]Hit, error) {
 	rows, e := s.Records()
-	hits := []Hit{}
 	if e != nil {
 		return nil, e
 	}
+	return s.searchRecords(rows, query, trash), nil
+}
+
+func (s *Store) searchRecords(rows []Record, query string, trash bool) []Hit {
+	hits := []Hit{}
 	terms := strings.Fields(strings.ToLower(query))
 	for _, r := range rows {
 		if r.Trashed != trash {
 			continue
 		}
-		text := r.Title + " " + r.RecordedAt + " " + r.ID + " " + r.Transcript
-		for _, seg := range r.Segments {
-			text += " " + seg.Speaker
-		}
-		hay := strings.ToLower(text)
 		match := true
-		for _, term := range terms {
-			if !strings.Contains(hay, term) {
-				match = false
-				break
+		if len(terms) > 0 {
+			var text strings.Builder
+			text.WriteString(r.Title + " " + r.RecordedAt + " " + r.ID + " " + r.Transcript)
+			for _, seg := range r.Segments {
+				text.WriteByte(' ')
+				text.WriteString(seg.Speaker)
+			}
+			hay := strings.ToLower(text.String())
+			for _, term := range terms {
+				if !strings.Contains(hay, term) {
+					match = false
+					break
+				}
 			}
 		}
 		if !match {
@@ -433,7 +441,7 @@ func (s *Store) Search(query string, trash bool) ([]Hit, error) {
 		}
 		hits = append(hits, Hit{Record: r, Snippet: string(snippet[start:end]), Directory: s.Dir(r), Matches: matches})
 	}
-	return hits, nil
+	return hits
 }
 
 func matchesTerms(text string, terms []string) bool {

@@ -1,6 +1,7 @@
 package xnote
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,6 +30,11 @@ func (d *desktop) layout(width, height int) {
 		d.keepSelectionVisible()
 		d.viewportWidth, d.viewportHeight = width, height
 	}
+	signature := fmt.Sprintf("%d/%d/%t/%d/%s", width, height, d.showingDetail, len(d.hits), d.signature)
+	if signature == d.layoutSignature {
+		return
+	}
+	d.layoutSignature = signature
 	d.body.Clear()
 	if d.showingDetail || len(d.hits) == 0 {
 		readingWidth := min(width-2, 104)

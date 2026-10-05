@@ -21,6 +21,10 @@ var border = tcell.NewHexColor(0x394657)
 
 type desktop struct {
 	s                      *Store
+	rows                   []Record
+	locale                 string
+	refreshRequests        chan struct{}
+	layoutSignature        string
 	ctx                    context.Context
 	app                    *tview.Application
 	pages                  *tview.Pages
@@ -50,12 +54,14 @@ type desktop struct {
 	rate                   float64
 }
 
-func (d *desktop) t(k string) string { return tr(d.s.Config().Locale, k) }
+func (d *desktop) t(k string) string { return tr(d.locale, k) }
 func UI(ctx context.Context, s *Store) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer PlayerClose()
 	d := newDesktop(ctx, s)
+	d.refreshRequests = make(chan struct{}, 1)
+	go d.loadLibrary(ctx)
 	go func() {
 		for ctx.Err() == nil {
 			_ = s.IndexDurations(ctx)
@@ -97,7 +103,7 @@ func UI(ctx context.Context, s *Store) error {
 	return d.app.Run()
 }
 func newDesktop(ctx context.Context, s *Store) *desktop {
-	d := &desktop{s: s, ctx: ctx, app: tview.NewApplication(), pages: tview.NewPages(), rate: 1}
+	d := &desktop{s: s, ctx: ctx, app: tview.NewApplication(), pages: tview.NewPages(), rate: 1, locale: s.Config().Locale}
 	tview.Styles.PrimitiveBackgroundColor = background
 	tview.Styles.ContrastBackgroundColor = surface
 	tview.Styles.BorderColor = border
@@ -238,12 +244,51 @@ func (d *desktop) record() (Record, bool) {
 	}
 	return Record{}, false
 }
-func (d *desktop) refresh() {
-	hits, e := d.s.Search(d.search.GetText(), d.view == "trash")
-	if e != nil {
-		d.message(e)
-		return
+
+// Only the UI goroutine owns rows and widgets. Disk reads run in one worker;
+// bursts of refresh requests coalesce instead of queuing behind user input.
+func (d *desktop) loadLibrary(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-d.refreshRequests:
+			rows, err := d.s.Records()
+			if ctx.Err() != nil {
+				return
+			}
+			d.app.QueueUpdateDraw(func() {
+				if err != nil {
+					d.message(err)
+					return
+				}
+				d.rows = rows
+				d.renderLibrary()
+			})
+		}
 	}
+}
+
+func (d *desktop) refresh() {
+	if d.refreshRequests != nil {
+		select {
+		case d.refreshRequests <- struct{}{}:
+		default:
+		}
+	} else {
+		rows, err := d.s.Records()
+		if err != nil {
+			d.message(err)
+			return
+		}
+		d.rows = rows
+	}
+	d.renderLibrary()
+}
+
+func (d *desktop) renderLibrary() {
+	d.locale = d.s.Config().Locale
+	hits := d.s.searchRecords(d.rows, d.search.GetText(), d.view == "trash")
 	filtered := []Hit{}
 	for _, h := range hits {
 		r := h.Record
@@ -303,7 +348,9 @@ func (d *desktop) refresh() {
 		}
 		d.library.SetSelectionChangedFunc(d.selectRecording)
 	}
-	d.showDetail()
+	if d.showingDetail || len(d.hits) == 0 {
+		d.showDetail()
+	}
 }
 func (d *desktop) showDetail() {
 	r, ok := d.record()
@@ -320,7 +367,7 @@ func (d *desktop) showDetail() {
 		d.detail.SetText("\n" + d.t(key))
 		return
 	}
-	version := r.ID + r.UpdatedAt + d.s.Config().Locale + d.search.GetText()
+	version := r.ID + r.UpdatedAt + d.locale + d.search.GetText()
 	if version == d.detailVersion {
 		return
 	}

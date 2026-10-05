@@ -19,15 +19,21 @@ func TestLibrarySelectionSurvivesRefreshAndEmptySearch(t *testing.T) {
 	_ = s.Update(id, func(r *Record) { r.Title = "Chosen recording"; r.Transcript = "Chosen transcript" })
 	d.refresh()
 	row, _ := d.library.GetSelection()
-	if d.selected != id || row != 2 || !strings.Contains(d.detail.GetText(true), "Chosen transcript") {
-		t.Fatal("background update changed selection or left a stale preview")
+	if d.selected != id || row != 2 {
+		t.Fatal("background update changed selection")
 	}
+	d.openRecording()
+	if !strings.Contains(d.detail.GetText(true), "Chosen transcript") {
+		t.Fatal("opening recording showed stale transcript")
+	}
+	d.backToLibrary()
 	d.search.SetText("no-such-recording")
 	if d.selected != "" || d.library.GetRowCount() != 1 {
 		t.Fatal("empty search retained a selection")
 	}
 	d.search.SetText("")
 	d.library.Select(2, 0)
+	d.openRecording()
 	if !strings.Contains(d.detail.GetText(true), "Chosen transcript") {
 		t.Fatal("clearing search did not restore preview")
 	}

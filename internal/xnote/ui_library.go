@@ -10,7 +10,9 @@ import (
 func (d *desktop) selectRecording(row, _ int) {
 	if row > 0 && row <= len(d.hits) {
 		d.selected = d.hits[row-1].Record.ID
-		d.showDetail()
+		if d.showingDetail {
+			d.showDetail()
+		}
 	}
 }
 
@@ -53,7 +55,7 @@ func (d *desktop) setView(view string) {
 
 func (d *desktop) updateTabs(hits []Hit) {
 	if d.view == "trash" {
-		hits, _ = d.s.Search(d.search.GetText(), false)
+		hits = d.s.searchRecords(d.rows, d.search.GetText(), false)
 	}
 	counts := [3]int{len(hits), 0, 0}
 	for _, hit := range hits {

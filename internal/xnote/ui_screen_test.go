@@ -1,6 +1,7 @@
 package xnote
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"testing"
@@ -155,5 +156,34 @@ func BenchmarkLibraryFrame(b *testing.B) {
 				screen.Show()
 			}
 		})
+	}
+}
+
+type inputModeScreen struct {
+	tcell.SimulationScreen
+	initialized, mouse, paste bool
+}
+
+func (s *inputModeScreen) Init() error {
+	err := s.SimulationScreen.Init()
+	s.initialized = err == nil
+	return err
+}
+func (s *inputModeScreen) EnableMouse(flags ...tcell.MouseFlags) {
+	s.mouse = s.initialized
+	s.SimulationScreen.EnableMouse(flags...)
+}
+func (s *inputModeScreen) EnablePaste() { s.paste = s.initialized; s.SimulationScreen.EnablePaste() }
+func TestCustomScreenEnablesInputModesAfterInitialization(t *testing.T) {
+	store, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := newDesktop(context.Background(), store)
+	raw := &inputModeScreen{SimulationScreen: tcell.NewSimulationScreen("UTF-8")}
+	d.setScreen(newFrameScreen(raw))
+	defer raw.Fini()
+	if !raw.initialized || !raw.mouse || !raw.paste {
+		t.Fatalf("custom screen input disabled: init=%t mouse=%t paste=%t", raw.initialized, raw.mouse, raw.paste)
 	}
 }

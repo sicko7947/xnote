@@ -66,7 +66,7 @@ func UI(ctx context.Context, s *Store) error {
 		return err
 	}
 	d := newDesktop(ctx, s)
-	d.app.SetScreen(newFrameScreen(screen))
+	d.setScreen(newFrameScreen(screen))
 	d.refreshRequests = make(chan struct{}, 1)
 	go d.loadLibrary(ctx)
 	go func() {

@@ -102,3 +102,13 @@ func (s *frameScreen) Sync() {
 	s.Screen.Sync()
 	s.styleChanged = false
 }
+
+// SetScreen initializes a supplied screen, but tview Run only enables input
+// modes when it creates the screen itself. Apply modes after installation.
+func (d *desktop) setScreen(screen tcell.Screen) {
+	d.app.SetScreen(screen)
+	// Application flags are already true; repeating EnableMouse(true) would
+	// be a no-op. Enable the newly initialized terminal itself.
+	screen.EnableMouse()
+	screen.EnablePaste()
+}

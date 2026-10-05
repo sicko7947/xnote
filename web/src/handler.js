@@ -180,7 +180,7 @@ export function createHandler(assets = { style: "", app: "" }) {
       if (path === "/")
         return finish(
           reply(
-            '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>X Note</title><link rel="stylesheet" href="/assets/style.css"><main><h1>X Note</h1><p>打开分享链接，查看录音和转写。</p><p class="muted">此站点不提供公开录音目录。</p></main></html>',
+            '<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>X Note</title><link rel="stylesheet" href="/assets/style.css"><main><h1>X Note</h1><p>Open a shared link to view a recording and its transcript.</p><p class="muted">There is no public recording directory.</p></main></html>',
             200,
             "text/html; charset=utf-8",
           ),

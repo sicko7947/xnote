@@ -110,10 +110,11 @@ HTTP 429 明确拒绝请求时，按服务端等待时间暂停该服务的新�
 
 **设置 → AI 标题与摘要** 配置 DOWAY 文字后处理。它使用已有的 DOWAY 登录，与转写服务独立，
 ElevenLabs、Codex Dictate 等已完成的转写也能生成标题、关键词及 Markdown 摘要。
-摘要语言可跟随界面，或指定中文、英文、日文；摘要并发默认 **2**，可调为 **1–8**，独立于转写并发。
+摘要语言默认**跟随录音语言**，按该条转写的文字脚本判断中文、英文或日文；也可固定为其中一种，
+或跟随界面语言。摘要并发默认 **2**，可调为 **1–8**，独立于转写并发。
 支持的 Qwen 模型默认使用快速模式；可打开“深度思考”提高复杂内容的分析深度，通常需要更多时间。
 其他模型保留服务端的模式，不向不支持的模型发送该参数。
-修改摘要语言或思考模式只影响后续新任务，不会自动重算相同输入的已完成摘要。
+摘要语言属于请求的一部分：改动它会将已有摘要标记为待处理，重新排队即按新设置重算，不再静默复用旧语言的结果。
 
 - 选中已转写录音，**m → 生成 AI 摘要**（或 `i`）；请求前失败或服务端明确拒绝时可在同一入口手动重试，请求结果不明时不会重发。
 - **m → 生成全部待摘要录音**（菜单内 `I`）先确认数量，再批量排队；已有相同内容的成功摘要不会重复生成。
@@ -126,7 +127,7 @@ ElevenLabs、Codex Dictate 等已完成的转写也能生成标题、关键词�
 xnote config automatic_summary true
 xnote config summary_concurrency 2
 xnote config summary_thinking false   # 支持的 Qwen 模型；true 开启深度思考
-xnote config summary_language zh-CN   # en / ja；空值跟随界面
+xnote config summary_language auto     # 默认：跟随每条录音；zh-CN / en / ja 固定；空值跟随界面
 xnote summarize RECORDING_ID          # TUI 或 watch 运行时处理
 ```
 

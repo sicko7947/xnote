@@ -14,14 +14,14 @@ func (d *desktop) summarySettings() {
 	form.SetBorder(true).SetTitle(" " + d.t("summary_settings") + " ")
 	form.AddTextView("DOWAY", d.t("summary_provider_help"), 72, 4, false, false)
 	form.AddFormItem(newOptionCheckbox(d.t("automatic_summary"), c.AutoSummary, func(v bool) { c.AutoSummary = v }))
-	languages := []string{"", "zh-CN", "en", "ja"}
+	languages := []string{summaryLanguageAuto, "", "zh-CN", "en", "ja"}
 	selected := 0
 	for i, language := range languages {
 		if language == c.SummaryLanguage {
 			selected = i
 		}
 	}
-	form.AddDropDown(d.t("summary_language"), []string{d.t("summary_follow_locale"), "简体中文", "English", "日本語"}, selected, func(_ string, i int) { c.SummaryLanguage = languages[i] })
+	form.AddDropDown(d.t("summary_language"), []string{d.t("summary_follow_recording"), d.t("summary_follow_locale"), "简体中文", "English", "日本語"}, selected, func(_ string, i int) { c.SummaryLanguage = languages[i] })
 	concurrency := strconv.Itoa(EffectiveSummaryConcurrency(c))
 	form.AddInputField(d.t("summary_concurrency"), concurrency, 4, nil, func(v string) { concurrency = v })
 	form.AddFormItem(newOptionCheckbox(d.t("summary_thinking"), c.SummaryThinking, func(v bool) { c.SummaryThinking = v }))
@@ -104,9 +104,14 @@ func (d *desktop) confirmQueueSummaries() {
 		d.setNotice(d.t("batch_summary_empty"))
 		return
 	}
+	// With "auto" each recording answers differently, so name the setting
+	// instead of pretending one language covers the whole batch.
 	language := c.SummaryLanguage
-	if language == "" {
-		language = c.Locale
+	switch language {
+	case summaryLanguageAuto:
+		language = d.t("summary_follow_recording")
+	case "":
+		language = d.t("summary_follow_locale")
 	}
 	mode := d.t("summary_fast")
 	if c.SummaryThinking {

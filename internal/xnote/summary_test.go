@@ -413,6 +413,7 @@ func TestSummaryBatchUsesConfirmedSnapshotAndNeverRetriesFailures(t *testing.T) 
 	if err := s.Update(rows[1].ID, func(r *Record) {
 		r.SummaryState = "done"
 		r.SummaryInputHash = summaryInputHash(*r)
+		r.SummaryOptions = summaryOptionsKey(s.Config())
 		r.Summary = &SummaryResult{Markdown: "Done"}
 	}); err != nil {
 		t.Fatal(err)

@@ -71,12 +71,10 @@ func (s *Store) GenerateDOWAYSummary(ctx context.Context, c Config, r Record) (S
 	})
 }
 
-func dowaySummaryLanguage(c Config) (string, error) {
-	language := c.SummaryLanguage
-	if language == "" {
-		language = c.Locale
-	}
-	switch strings.ToLower(language) {
+// summaryLanguageCode maps a configured summary language to the langCode the
+// DOWAY AI backend expects.
+func summaryLanguageCode(language string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(language)) {
 	case "zh-cn", "zh":
 		return "zh", nil
 	case "en":
@@ -87,8 +85,19 @@ func dowaySummaryLanguage(c Config) (string, error) {
 	return "", errors.New("DOWAY AI summary language must be Chinese, English, or Japanese")
 }
 
+// dowaySummaryLanguage resolves the configured setting to a backend langCode.
+// An empty setting follows the interface language; the per-recording "auto"
+// setting is resolved by summaryLanguageFor.
+func dowaySummaryLanguage(c Config) (string, error) {
+	language := c.SummaryLanguage
+	if language == "" {
+		language = c.Locale
+	}
+	return summaryLanguageCode(language)
+}
+
 func prepareDOWAYSummary(ctx context.Context, c Config, r Record, session cloudSession, post func(context.Context, string, map[string]any) (json.RawMessage, error), profiles fs.FS) (dowaySummaryPlan, error) {
-	language, err := dowaySummaryLanguage(c)
+	language, err := summaryLanguageFor(c, r)
 	if err != nil {
 		return dowaySummaryPlan{}, err
 	}
@@ -159,7 +168,7 @@ func (s *Store) generateDOWAYSummary(ctx context.Context, c Config, r Record, d 
 	if !safePart(r.ID) || r.Trashed || r.State != "done" || strings.TrimSpace(r.Transcript) == "" {
 		return SummaryResult{}, errors.New("DOWAY AI requires a completed transcript")
 	}
-	language, err := dowaySummaryLanguage(c)
+	language, err := summaryLanguageFor(c, r)
 	if err != nil {
 		return SummaryResult{}, err
 	}
@@ -193,9 +202,11 @@ func (s *Store) generateDOWAYSummary(ctx context.Context, c Config, r Record, d 
 		}
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	// The job file is already keyed by language, so its name only needs the
+	// output shape; the language is validated through job.Language below.
 	path := filepath.Join(s.Dir(r), ".summary", "doway-"+sourceHash+"-"+language+".json")
-	if options := summaryOptionsKey(c); options != "" {
-		path = strings.TrimSuffix(path, ".json") + "-" + options + ".json"
+	if outputs := summaryOutputsKey(c); outputs != "summary" {
+		path = strings.TrimSuffix(path, ".json") + "-" + outputs + ".json"
 	}
 	var job dowaySummaryJob
 	err = readJSON(path, &job)
@@ -204,7 +215,7 @@ func (s *Store) generateDOWAYSummary(ctx context.Context, c Config, r Record, d 
 	}
 	if errors.Is(err, os.ErrNotExist) {
 		job = dowaySummaryJob{Version: 1, RecordID: r.ID, PlayerID: session.PlayerID.String(), Serial: r.Serial, SourceHash: sourceHash, Language: language, Thinking: c.SummaryThinking, FileUID: r.CloudUID, Phase: "prepared", Words: len(utf16.Encode([]rune(r.Transcript)))}
-		job.Options = summaryOptionsKey(c)
+		job.Options = summaryOutputsKey(c)
 		if job.FileUID == "" {
 			var transcription dowayJob
 			if readErr := readJSON(filepath.Join(s.Dir(r), ".transcription", "doway-job.json"), &transcription); readErr == nil {
@@ -227,7 +238,7 @@ func (s *Store) generateDOWAYSummary(ctx context.Context, c Config, r Record, d 
 		if err = saveDOWAYSummaryJob(path, &job, d.Now); err != nil {
 			return SummaryResult{}, err
 		}
-	} else if job.Version != 1 || job.RecordID != r.ID || job.PlayerID != session.PlayerID.String() || job.Serial != r.Serial || job.SourceHash != sourceHash || job.Language != language || job.Options != summaryOptionsKey(c) {
+	} else if job.Version != 1 || job.RecordID != r.ID || job.PlayerID != session.PlayerID.String() || job.Serial != r.Serial || job.SourceHash != sourceHash || job.Language != language || legacySummaryOutputs(job.Options) != summaryOutputsKey(c) {
 		return SummaryResult{}, errors.New("DOWAY AI saved job belongs to different input or account")
 	}
 	if job.Phase == "completed" || job.Phase == "reporting" {

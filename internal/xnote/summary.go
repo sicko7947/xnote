@@ -28,7 +28,9 @@ type Mindmap struct {
 	Branches []MindmapBranch `json:"branches"`
 }
 
-func summaryOptionsKey(c Config) string {
+// summaryOutputsKey names the AI outputs a request produces. "none" means the
+// record has nothing to generate, which callers test for directly.
+func summaryOutputsKey(c Config) string {
 	if c.SummaryDisabled {
 		if c.MindmapEnabled {
 			return "mindmap"
@@ -38,11 +40,40 @@ func summaryOptionsKey(c Config) string {
 	if c.MindmapEnabled {
 		return "summary-mindmap"
 	}
-	return ""
+	return "summary"
 }
+
+// summaryOptionsKey identifies the exact request a stored summary was produced
+// under. It is persisted on the record, so it must also carry the summary
+// language: otherwise switching language would silently keep serving results
+// written in the previous one, and there would be no way to re-run them.
+func summaryOptionsKey(c Config) string {
+	outputs := summaryOutputsKey(c)
+	if outputs == "none" {
+		return outputs // no outputs at all: the language cannot matter
+	}
+	return outputs + "|" + c.SummaryLanguage
+}
+
+// legacySummaryOutputs maps option strings persisted by versions that predate
+// the recorded summary language onto their current equivalent. The job cache is
+// keyed by path and only ever created once, so without this an upgraded install
+// would keep rejecting its own older job file and never summarise that
+// recording again. The empty string meant summary-only back then.
+func legacySummaryOutputs(options string) string {
+	if options == "" {
+		return "summary"
+	}
+	return options
+}
+
+// summaryConfigForOptions restores the output switches a queued job was created
+// with. It ignores any language suffix and tolerates the pre-language values
+// still stored on records summarised by earlier versions.
 func summaryConfigForOptions(c Config, options string) Config {
-	c.SummaryDisabled = options == "mindmap" || options == "none"
-	c.MindmapEnabled = options == "mindmap" || options == "summary-mindmap"
+	outputs, _, _ := strings.Cut(options, "|")
+	c.SummaryDisabled = outputs == "mindmap" || outputs == "none"
+	c.MindmapEnabled = outputs == "mindmap" || outputs == "summary-mindmap"
 	return c
 }
 func validateMindmap(m *Mindmap) error {

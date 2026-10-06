@@ -18,7 +18,7 @@ func TestSummaryConfigDefaultsAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := s.Config()
-	if c.AutoSummary || c.SummaryThinking || c.SummaryConcurrency != 2 || c.SummaryLanguage != "" {
+	if c.AutoSummary || c.SummaryThinking || c.SummaryConcurrency != 2 || c.SummaryLanguage != summaryLanguageAuto {
 		t.Fatalf("unexpected summary defaults: %+v", c)
 	}
 	for _, tc := range []struct {
@@ -34,7 +34,7 @@ func TestSummaryConfigDefaultsAndValidation(t *testing.T) {
 		}
 	}
 	c.SummaryConcurrency = 2
-	for _, language := range []string{"", "zh-CN", "en", "ja"} {
+	for _, language := range []string{"", "auto", "zh-CN", "en", "ja"} {
 		c.SummaryLanguage = language
 		if err := s.SaveConfig(c); err != nil {
 			t.Fatal(err)
@@ -121,7 +121,8 @@ func TestSummarySettingsCancelValidationAndFreshConfig(t *testing.T) {
 	if !checkbox.IsChecked() {
 		t.Fatal("automatic summary option did not toggle")
 	}
-	form.GetFormItem(2).(*tview.DropDown).SetCurrentOption(2)
+	// Dropdown order is auto, follow-interface, zh-CN, en, ja.
+	form.GetFormItem(2).(*tview.DropDown).SetCurrentOption(3)
 	input.SetText("3")
 	press(tcell.KeyCtrlS, 0)
 	fresh.AutoSummary, fresh.SummaryLanguage, fresh.SummaryConcurrency = true, "en", 3
@@ -211,6 +212,7 @@ func TestBatchSummaryConfirmationUsesDOWAYAndConfirmedSnapshot(t *testing.T) {
 			r.State, r.Transcript, r.SummaryState = "done", "Transcript text", states[i]
 			if i == 2 {
 				r.SummaryInputHash = summaryInputHash(*r)
+				r.SummaryOptions = summaryOptionsKey(c)
 				r.Summary = &SummaryResult{Title: "Existing", Markdown: "Existing result"}
 			}
 			if i == 6 {

@@ -114,7 +114,7 @@ func Open(root string) (*Store, error) {
 	}
 	s := &Store{Root: root}
 	if _, err = os.Stat(s.path("config.json")); errors.Is(err, os.ErrNotExist) {
-		err = s.SaveConfig(Config{Locale: "zh-CN", Serial: "HD5GA00725", Auto: true, TranscriptionConcurrency: 4, SummaryConcurrency: 2, Provider: "doway", APIKeyEnv: "XNOTE_API_KEY", Model: "whisper-1"})
+		err = s.SaveConfig(Config{Locale: "zh-CN", Serial: "HD5GA00725", Auto: true, TranscriptionConcurrency: 4, SummaryConcurrency: 2, SummaryLanguage: summaryLanguageAuto, Provider: "doway", APIKeyEnv: "XNOTE_API_KEY", Model: "whisper-1"})
 		if err != nil {
 			return nil, err
 		}
@@ -174,9 +174,9 @@ func (s *Store) SaveConfig(c Config) error {
 		return errors.New("summary_concurrency must be between 1 and 8 (or 0 for the default)")
 	}
 	switch c.SummaryLanguage {
-	case "", "zh-CN", "en", "ja":
+	case "", "auto", "zh-CN", "en", "ja":
 	default:
-		return errors.New("summary_language must be empty, zh-CN, en, or ja")
+		return errors.New("summary_language must be empty, auto, zh-CN, en, or ja")
 	}
 	if !safePart(c.Serial) {
 		return errors.New("invalid device serial")

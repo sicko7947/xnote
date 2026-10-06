@@ -34,6 +34,7 @@ var words = map[string][3]string{
 	"automatic_summary":                 {"新转写完成后自动生成摘要", "Summarize newly completed transcripts", "新しい文字起こしの完了後に自動要約"},
 	"summary_language":                  {"摘要语言", "Summary language", "要約の言語"},
 	"summary_follow_locale":             {"跟随界面语言", "Follow interface language", "表示言語に合わせる"},
+	"summary_follow_recording":          {"跟随录音语言", "Follow each recording", "録音の言語に合わせる"},
 	"summary_thinking":                  {"深度思考（支持的 Qwen 模型，较慢）", "Deep thinking (supported Qwen models; slower)", "深い思考（対応 Qwen モデルのみ・低速）"},
 	"summary_fast":                      {"快速", "Fast", "高速"},
 	"summary_deep":                      {"深度思考", "Deep thinking", "深い思考"},

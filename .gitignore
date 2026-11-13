@@ -1,5 +1,8 @@
 # Local builds and macOS files
 /dist/
+# Binary from `go build ./cmd/xnote/main.go`; a root-level `main` file also
+# shadows the `main` branch for git revision resolution.
+/main
 .DS_Store
 *.test
 coverage.out

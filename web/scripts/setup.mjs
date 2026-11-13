@@ -15,11 +15,19 @@ import { homedir } from "node:os";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const web = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let dataDir = "";
+let explicitURL = process.env.XNOTE_SHARE_URL || "";
 const args = process.argv.slice(2);
-if (args.length && (args.length !== 2 || args[0] !== "--data"))
-  throw new Error("Usage: bun run setup [--data /path/to/XNote]");
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--data" && args[i + 1]) dataDir = args[++i];
+  else if (args[i] === "--url" && args[i + 1]) explicitURL = args[++i];
+  else
+    throw new Error(
+      "Usage: bun run setup [--data /path/to/XNote] [--url https://share.example.com]",
+    );
+}
 const root = resolve(
-  args[1] || process.env.XNOTE_DATA_DIR || join(homedir(), "Documents/XNote"),
+  dataDir || process.env.XNOTE_DATA_DIR || join(homedir(), "Documents/XNote"),
 );
 const binary = resolve(web, "../dist/xnote");
 if (!existsSync(binary))
@@ -44,6 +52,37 @@ function run(command, argv, input) {
   }
   process.stdout.write(output);
   return output;
+}
+function origin(value, label) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    throw new Error(`${label} must be an HTTPS origin: ${value}`);
+  }
+  if (
+    u.protocol !== "https:" ||
+    u.username ||
+    u.password ||
+    u.search ||
+    u.hash ||
+    (u.pathname !== "/" && u.pathname !== "")
+  )
+    throw new Error(`${label} must be an HTTPS origin without a path: ${value}`);
+  return u.origin;
+}
+// Read the declared custom domain before deploying, so a workers.dev URL never overrides it.
+function customDomain() {
+  const raw = readFileSync(join(web, "wrangler.jsonc"), "utf8")
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/,\s*([}\]])/g, "$1");
+  const routes = JSON.parse(raw).routes;
+  if (!Array.isArray(routes)) return "";
+  const route = routes.find(
+    (r) => r?.custom_domain && typeof r.pattern === "string",
+  );
+  return route ? origin("https://" + route.pattern, "wrangler.jsonc route") : "";
 }
 const buckets = run(wrangler, ["r2", "bucket", "list"]);
 if (!/(?:name:\s*|"name"\s*:\s*")xnote-shares(?:"|\s|$)/.test(buckets))
@@ -79,12 +118,13 @@ try {
 } finally {
   rmSync(temp, { recursive: true, force: true });
 }
-const url = output.match(
-  /https:\/\/xnote-share\.[a-z0-9-]+\.workers\.dev/,
-)?.[0];
+const url = explicitURL
+  ? origin(explicitURL, "--url")
+  : customDomain() ||
+    output.match(/https:\/\/xnote-share\.[a-z0-9-]+\.workers\.dev/)?.[0];
 if (!url)
   throw new Error(
-    "Deployment completed, but no workers.dev URL was returned. Enable workers.dev, then set xnote config share_url manually.",
+    "Deployment completed, but no share URL was found. Pass --url https://your.domain, set XNOTE_SHARE_URL, or add a custom domain route to wrangler.jsonc.",
   );
 run(binary, ["--data", root, "config", "share_url", url]);
 const health = await fetch(url + "/health");

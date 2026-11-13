@@ -183,7 +183,7 @@ TUI 或 `watch` 运行时会自动重连；自动下载与自动转写各自控�
 
 ## 自己的公开分享链接
 
-Cloudflare Worker + 私有 R2，使用免费分配的 `workers.dev` 地址，无需域名或数据库。
+Cloudflare Worker + 私有 R2，无需数据库或常驻服务器。可以绑定自己的域名（本项目当前使用 `https://xnote.tendor.ai`）；未绑定域名时使用免费分配的 `workers.dev` 地址。
 网页支持 Markdown、播放器、说话人时间线、Summary 和可选 Mindmap；Agent 可以直接 `curl` 读取 JSON / Markdown。
 
 ```sh
@@ -194,6 +194,8 @@ bunx wrangler login
 bun run setup
 ```
 
+使用自定义域名时，把域名写进 `web/wrangler.jsonc` 的 `routes`，或给脚本显式传入地址：
+`bun run setup --url https://xnote.tendor.ai`（也可设置 `XNOTE_SHARE_URL`）。
 部署一次后，在录音「更多 → 公开分享」里发布并复制链接；默认仅文字，可选包含音频。
 重复发布更新原链接，「取消分享」撤销访问。AI 设置中 Summary 默认开启、Mindmap 默认关闭；
 沿用现有 DOWAY AI 队列生成，生成完再发布。分享网站不调用模型。

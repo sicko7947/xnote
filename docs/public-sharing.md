@@ -1,8 +1,8 @@
 # 自己的公开分享站点
 
 一个 Cloudflare Worker + 私有 R2 存储桶，无数据库、无常驻服务器、无前端框架。
-使用 Cloudflare 免费分配的 `https://xnote-share.<你的子域>.workers.dev`，无需购买或绑定域名。
-分享链接不设到期时间；域名、账号、部署和文件需要持续保留。免费额度及账户配额仍适用。
+默认使用 Cloudflare 免费分配的 `https://xnote-share.<你的子域>.workers.dev`；也可以绑定自己的域名，
+本项目当前使用 `https://xnote.tendor.ai`。分享链接不设到期时间；域名、账号、部署和文件需要持续保留。免费额度及账户配额仍适用。
 
 ## 一次性部署
 
@@ -19,6 +19,8 @@ bunx wrangler login
 bun run setup
 ```
 
+自定义域名写在 `web/wrangler.jsonc` 的 `routes` 里（`custom_domain: true`），脚本会优先使用它；
+也可以显式指定：`bun run setup --url https://xnote.tendor.ai`，或设置 `XNOTE_SHARE_URL`。
 自定义录音库可以使用 `bun run setup --data /absolute/library`。
 脚本会列出/创建 `xnote-shares` 桶，部署 `xnote-share` Worker，生成管理密钥，
 将密钥存入录音库 `.env`（0600），通过 Worker secret 配置同一个密钥，并设置 `share_url`。
